@@ -1,4 +1,4 @@
-;   Copyright (c) Rich Hickey. All rights reserved.
+;   Copyright (c) Chas Emerick, Rich Hickey, and other contributors. All rights reserved.
 ;   The use and distribution terms for this software are covered by the
 ;   Eclipse Public License 1.0 (http://opensource.org/licenses/eclipse-1.0.php)
 ;   which can be found in the file epl-v10.html at the root of this distribution.
@@ -6,82 +6,58 @@
 ;   the terms of this license.
 ;   You must not remove this notice, or any other, from this software.
 
-(ns org.clojure.sdb
- "A Clojure library for working with Amazon SimpleDB
-  
-  http://aws.amazon.com/simpledb/
-
-  Built on top of the Java API:
-
-  http://developer.amazonwebservices.com/connect/entry.jspa?externalID=1132&categoryID=189
-  http://s3.amazonaws.com/awscode/amazon-simpledb/2007-11-07/java/library/doc/index.html"
- (use clojure.contrib.pprint)
- (import
-   (com.amazonaws.sdb AmazonSimpleDB AmazonSimpleDBClient AmazonSimpleDBConfig)
-   (com.amazonaws.sdb.model
-     Attribute BatchPutAttributesRequest CreateDomainRequest 
-     DeleteAttributesRequest DeleteDomainRequest DomainMetadataRequest  
-     GetAttributesRequest Item ListDomainsRequest  
-     PutAttributesRequest ReplaceableAttribute ReplaceableItem
-     ResponseMetadata SelectRequest)
-   (com.amazonaws.sdb.util AmazonSimpleDBUtil)))
-
-(defn uuid
-  "Given no arg, generates a random UUID, else takes a string
-  representing a specific UUID"
-  ([] (java.util.UUID/randomUUID))
-  ([s] (java.util.UUID/fromString s)))
+(ns cemerick.rummage
+ (:import
+   cemerick.rummage.DataUtils
+   (com.amazonaws.services.simpledb AmazonSimpleDBClient)
+   (com.amazonaws.services.simpledb.model CreateDomainRequest DeleteDomainRequest
+     ListDomainsRequest
+     DomainMetadataRequest)))
 
 (defn create-client
   "Creates a client for talking to a specific AWS SimpleDB
-  account. The same client can be reused for multiple requests (from
-  the same thread?)."
-  ([aws-key aws-secret-key config]
-     (AmazonSimpleDBClient. aws-key aws-secret-key config))
-  ([aws-key aws-secret-key]
-     (create-client aws-key aws-secret-key
-                    (.withSignatureVersion (AmazonSimpleDBConfig.) "1"))))
+  account. The same client can be reused for multiple requests."
+  ([id secret-key]
+    (create-client id secret-key (com.amazonaws.ClientConfiguration.)))
+  ([id secret-key client-config]
+    (AmazonSimpleDBClient. (com.amazonaws.auth.BasicAWSCredentials. id secret-key)
+      (.withUserAgent client-config "Rummage - SDB for Clojure"))))
 
 (defn create-domain
-  "Creates a domain in the account. This is an administrative operation"
-  [client name]
+  "Creates a domain with the specified name.  Returns successfully if the domain
+   already exists."
+  [^AmazonSimpleDBClient client name]
   (.createDomain client (CreateDomainRequest. name)))
 
-(defn domains 
-  "Returns a sequence of domain names"
+(defn delete-domain
+  "Deletes the named domain."
+  [^AmazonSimpleDBClient client name]
+  (.deleteDomain client (DeleteDomainRequest. name)))
+
+(defn- list-domains*
+  [^AmazonSimpleDBClient client next-token]
+  (let [req (-> (ListDomainsRequest.) (.withNextToken next-token))
+        res (.listDomains client req)]
+    (concat (.getDomainNames res)
+      (when (.getNextToken res)
+        (list-domains* client (.getNextToken res))))))
+
+(defn list-domains
+  "Returns a sequence of all domain names available from the given client."
   [client]
-  (vec
-    (.. client
-      (listDomains
-        (ListDomainsRequest.))
-      getListDomainsResult
-      getDomainName)))
+  (list-domains* client nil))
 
 (defn domain-metadata 
   "Returns a map of domain metadata"
-  [client domain]
+  [^AmazonSimpleDBClient client domain]
   (select-keys
     (-> client
       (.domainMetadata (DomainMetadataRequest. domain))
-      .getDomainMetadataResult
       bean)
     [:timestamp :attributeValuesSizeBytes  :attributeNameCount  :itemCount
      :attributeValueCount  :attributeNamesSizeBytes :itemNamesSizeBytes]))
 
-
-(defn- encode-integer [offset n]
-  (let [noff (+ n offset)]
-    (assert (pos? noff))
-    (let [s (str noff)]
-      (if (> (count (str offset)) (count s))
-        (str "0" s)
-        s))))
-
-(defn- decode-integer [offset nstr]
-  (- (read-string (if (= \0 (nth nstr 0)) (subs nstr 1) nstr))
-     offset))
-
-(declare decode-sdb-str)
+#_(comment (declare decode-sdb-str)
 
 (defn from-sdb-str 
   "Reproduces the representation of the item from a string created by to-sdb-str"
@@ -301,128 +277,7 @@
   [client q]
   (loop [ret [] next-token nil]
     (let [r1 (query client q next-token)
-          nt (:next-token ^r1)]
+          nt (:next-token (meta r1))]
       (if nt
         (recur (into ret r1) nt)
-        (with-meta (into ret r1) ^r1)))))
-
-
-(comment
-;some sample usage
-(use 'org.clojure.sdb)
-
-;get logging to calm down, else noisy at REPL 
-(org.apache.log4j.PropertyConfigurator/configure 
- (doto (java.util.Properties.) 
-   (.setProperty "log4j.rootLogger" "WARN")
-   (.setProperty "log4j.logger.com.amazonaws.sdb" "WARN") 
-   (.setProperty "log4j.logger.httpclient" "WARN")))
-
-;the 'spreadsheet' sample data in the canonic item-map representation
-;an item-map must have an :sdb/id key. Multi-value attrs are represented as sets. 
-;Note that attrs with single values always come back as non-sets!
-(def db
-     #{{:sdb/id (uuid "773fb848-70a2-4586-b6b3-4aaa2dd55e00"),
-        :category #{"Clothing" "Motorcycle Parts"},
-        :subcat "Clothing",
-        :Name "Leather Pants",
-        :color "Black",
-        :size #{"Small" "Medium" "Large"}}
-       {:sdb/id (uuid "e76589f6-34e5-4a14-8af6-b70bf0242d7d"),
-        :category "Clothes",
-        :subcat "Pants",
-        :Name "Sweatpants",
-        :color #{"Yellow" "Pink" "Blue"},
-        :size "Large"}
-       {:sdb/id (uuid "7658a719-837a-4f55-828b-2472cc823bb1"),
-        :category "Clothes",
-        :subcat "Sweater",
-        :Name "Cathair Sweater",
-        :color "Siamese",
-        :size #{"Small" "Medium" "Large"}}
-       {:sdb/id (uuid "fa18dc85-63d3-47b0-865b-7946057d7f42"),
-        :category "Car Parts",
-        :subcat "Emissions",
-        :Name "02 Sensor",
-        :make "Audi",
-        :model "S4"}
-       {:sdb/id (uuid "6bca3ac8-fc8d-44d2-b7c3-da959ad7dfc4"),
-        :category "Clothes",
-        :subcat "Pants",
-        :Name "Designer Jeans",
-        :color #{"Paisley Acid Wash"},
-        :size #{"32x32" "30x32" "32x34"}}
-       {:sdb/id (uuid "ebd3cb4a-b94d-4150-baaa-0821beaa776c"),
-        :category "Car Parts",
-        :subcat "Engine",
-        :Name "Turbos",
-        :make "Audi",
-        :model "S4"}
-       {:sdb/id (uuid "598d2273-ae72-4946-9fa4-1fe4a2874be7"),
-        :category "Motorcycle Parts",
-        :subcat "Bodywork",
-        :Name "Fender Eliminator",
-        :color "Blue",
-        :make "Yamaha",
-        :model "R1"}})
-
-
-(def client (create-client "your-aws-key" "your-aws-secret-key"))
-
-;one-time domain create
-;(create-domain client "test")
-
-(domains client)
-
-(domain-metadata client "test")
-
-;put them all in
-(batch-put-attrs client "test" db)
-
-;get one
-(get-attrs client "test" (uuid "e76589f6-34e5-4a14-8af6-b70bf0242d7d"))
-
-;get part of one
-(get-attrs client "test" (uuid "e76589f6-34e5-4a14-8af6-b70bf0242d7d") :color :Name)
-
-(get-attrs client "test" (uuid "6bca3ac8-fc8d-44d2-b7c3-da959ad7dfc4"))
-(delete-attrs client "test" (uuid "6bca3ac8-fc8d-44d2-b7c3-da959ad7dfc4") {:size "32x32"})
-(get-attrs client "test" (uuid "6bca3ac8-fc8d-44d2-b7c3-da959ad7dfc4"))
-
-(get-attrs client "test" (uuid "e76589f6-34e5-4a14-8af6-b70bf0242d7d"))
-;wipe it out
-(delete-attrs client "test" (uuid "e76589f6-34e5-4a14-8af6-b70bf0242d7d"))
-(get-attrs client "test" (uuid "e76589f6-34e5-4a14-8af6-b70bf0242d7d"))
-
-;restore it
-(put-attrs client "test"
-  {:sdb/id (uuid "e76589f6-34e5-4a14-8af6-b70bf0242d7d"),
-   :category "Clothes",
-   :subcat "Pants",
-   :Name "Sweatpants",
-   :color #{"Yellow" "Pink" "Blue"},
-   :size "Large"})
-(get-attrs client "test" (uuid "e76589f6-34e5-4a14-8af6-b70bf0242d7d"))
-
-;remove bits
-(delete-attrs client "test" (uuid "e76589f6-34e5-4a14-8af6-b70bf0242d7d") #{:Name :size})
-(get-attrs client "test" (uuid "e76589f6-34e5-4a14-8af6-b70bf0242d7d"))
-(delete-attrs client "test" (uuid "e76589f6-34e5-4a14-8af6-b70bf0242d7d") {:color "Yellow"})
-(get-attrs client "test" (uuid "e76589f6-34e5-4a14-8af6-b70bf0242d7d"))
-
-;query variants
-(query client
-  '{;:select ids
-    ;:select count
-    :select *
-    ;:select [:Name, :color]
-    :from "test"
-    :where (or
-             (and (= :category "Clothes") (= :subcat "Pants"))
-             (= :category "Car Parts"))})
-
-;parameterized query is just syntax-quote!
-(let [cat "Clothes"]
-  (query client `{:select * :from "test" :where (or (= :category ~cat)
-                                                  (= :category "Car Parts"))}))
-)
+        (with-meta (into ret r1) (meta r1)))))))
