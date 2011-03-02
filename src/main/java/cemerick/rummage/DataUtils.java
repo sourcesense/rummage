@@ -237,6 +237,32 @@ public class DataUtils {
         strBuffer.append(longString);
         return strBuffer.toString();
     }
+    
+    /**
+     * Encodes real long value into a string by offsetting and zero-padding 
+     * number up to the specified number of digits.  Use this encoding method if the data
+     * range set includes both positive and negative values.
+     * 
+     * NOTE: this is a copy/paste of the (long, int, int) overload, modified so that
+     * a long offsetValue can be provided; otherwise, the smallest representable
+     * negative value is Integer.MIN_VALUE.
+     * 
+     * @param number long to be encoded
+     * @param maxNumDigits maximum number of digits in the largest absolute value in the data set
+     * @param offsetValue offset value, has to be greater than absolute value of any negative number in the data set.
+     * @return string representation of the long
+     */
+    public static String encodeRealNumberRange(long number, int maxNumDigits, long offsetValue) {
+        long offsetNumber = number + offsetValue;
+        String longString = Long.toString(offsetNumber);
+        int numZeroes = maxNumDigits - longString.length();
+        StringBuffer strBuffer = new StringBuffer(numZeroes + longString.length());
+        for (int i = 0; i < numZeroes; i++) {
+            strBuffer.insert(i, '0');
+        }
+        strBuffer.append(longString);
+        return strBuffer.toString();
+    }
 
     /**
      * Encodes real float value into a string by offsetting and zero-padding 
