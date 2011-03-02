@@ -14,7 +14,8 @@
     (com.amazonaws.services.simpledb.model CreateDomainRequest DeleteDomainRequest
       ListDomainsRequest DomainMetadataRequest Attribute
       ReplaceableItem ReplaceableAttribute PutAttributesRequest
-      GetAttributesRequest UpdateCondition BatchPutAttributesRequest)))
+      GetAttributesRequest UpdateCondition BatchPutAttributesRequest
+      DeleteAttributesRequest DeletableItem BatchDeleteAttributesRequest)))
 
 (defn create-client
   "Creates a client for talking to a specific AWS SimpleDB
@@ -115,7 +116,7 @@
     (ReplaceableItem. ((:encode-id schema) (:sdb/id i))
       (build-attrs (:encode schema) i add-to?))))
 
-(defn put-all-attrs
+(defn batch-put-attrs
   "Puts the attrs for multiple items into a domain, with the same semantics as put-attrs"
   [client-config domain items & {:keys [add-to?]}]
   (doseq [batch (partition-all 25 (build-items client-config items add-to?))]
@@ -145,23 +146,46 @@
     (when-let [attrs (-> res .getAttributes seq)]
       (into-map (:decode client-config) item-id attrs))))
 
-#_(comment
+(defn- build-delete-attrs
+  [encode-fn attrs]
+  (let [attrs (cond
+                (or (empty? attrs) (map? attrs)) attrs
+                (set? attrs) (for [key attrs] [key nil])
+                :else (throw (IllegalArgumentException.
+                               ":attrs must be a set of attribute keys, a map of attribute keys and values, or absent to delete all attributes of item-id")))]
+    (for [[key value :as pair] attrs
+          :let [[name avalue] (encode-fn pair)]]
+      (if value
+        (Attribute. name avalue)
+        (.withName (Attribute.) name)))))
 
-;todo remove a subset of a set of vals
 (defn delete-attrs
   "Deletes the attrs from the item. If no attrs are supplied, deletes
   all attrs and the item. attrs can be a set, in which case all values
   at those keys will be deleted, or a map, in which case only the
   values supplied will be deleted."
-  ([client domain item-id] (delete-attrs client domain item-id #{}))
-  ([client domain item-id attrs]
-    (.deleteAttributes client
-      (DeleteAttributesRequest. domain (to-sdb-str item-id)
-        (cond
-          (set? attrs) (map #(Attribute. (to-sdb-str %) nil) attrs)
-          (map? attrs) (map (fn [[k v]] (Attribute. (to-sdb-str k) (to-sdb-str v))) attrs)
-          :else (throw (Exception. "attrs must be set or map")))))))
+  [client-config domain item-id & {:keys [attrs expecting not-expecting]}]
+  (when (and expecting not-expecting)
+    (throw (IllegalArgumentException. "Cannot have both :expecting and :not-expecting delete conditions")))
+  (let [encode-fn (:encode client-config)
+        attrs (build-delete-attrs encode-fn attrs)
+        update-condition (update-condition encode-fn expecting not-expecting)]
+    (.deleteAttributes
+      (client client-config)
+      (DeleteAttributesRequest. domain ((:encode-id client-config) item-id) attrs update-condition))))
 
+(defn batch-delete-attrs
+  [client-config domain item-attrs]
+  (let [encode-id (:encode-id client-config)
+        encode-fn (:encode client-config)
+        del-items (for [[item-id attrs] item-attrs]
+                    (DeletableItem. (encode-id item-id) (build-delete-attrs encode-fn attrs)))]
+    (doseq [batch (partition-all 25 del-items)]
+      (.batchDeleteAttributes
+        (client client-config)
+        (BatchDeleteAttributesRequest. domain batch)))))
+
+#_(comment
 (defn- attr-str [attr]
   (if (sequential? attr)
     (let [[op a] attr]

@@ -156,7 +156,47 @@
 
 (defsdbtest test-batch-put
   (let [config (assoc encoding/all-strings :client client :consistent-read? true)]
-    (put-all-attrs config *test-domain-name* (for [x (range 250)]
+    (batch-put-attrs config *test-domain-name* (for [x (range 250)]
                                                {:sdb/id x :key x}))
     (doseq [id (map str (range 250))]
       (is (get-attrs config *test-domain-name* id)))))
+
+(defsdbtest test-delete
+  (let [config (assoc encoding/all-strings :client client :consistent-read? true)]
+    (put-attrs config *test-domain-name* {:sdb/id "foo" :a 5 :b [5 6 7] :c 7})
+    
+    (is (thrown-with-msg? com.amazonaws.AmazonServiceException #".*Conditional check failed.*"
+          (delete-attrs config *test-domain-name* "foo" :attrs {:c 7} :not-expecting :a)))
+    
+    (is (thrown-with-msg? com.amazonaws.AmazonServiceException #".*Conditional check failed.*"
+          (delete-attrs config *test-domain-name* "foo" :attrs {:c 7} :expecting [:c 8])))
+    
+    (delete-attrs config *test-domain-name* "foo" :attrs #{:c} :expecting [:c 7])
+    (is (nil? (get (get-attrs config *test-domain-name* "foo" :c) ":c")))
+    
+    (delete-attrs config *test-domain-name* "foo" :attrs {:b 7})    
+    (is (= #{"5" "6"} (get (get-attrs config *test-domain-name* "foo" :b) ":b")))
+    
+    (delete-attrs config *test-domain-name* "foo" :attrs #{:b})    
+    (is (nil? (get (get-attrs config *test-domain-name* "foo" :b) ":b")))
+    
+    (delete-attrs config *test-domain-name* "foo")
+    (is (nil? (get-attrs config *test-domain-name* "foo")))))
+
+(defsdbtest test-batch-delete
+  (let [config (assoc encoding/all-strings :client client :consistent-read? true)]
+    (batch-put-attrs config *test-domain-name* (for [x (range 235)]
+                                                 {:sdb/id x :key x :otherkey (inc x)}))
+    (is (get-attrs config *test-domain-name* "34"))
+    
+    (batch-delete-attrs config *test-domain-name*
+      (into {} (for [x (range 235)]
+                 [x (if (even? x)
+                      #{:key :otherkey}
+                      {:key x})])))
+    
+    (doseq [x (range 10)
+            :let [item (get-attrs config *test-domain-name* x)]]
+      (if (even? x)
+        (is (nil? item))
+        (is (= (str (inc x)) (get item ":otherkey")))))))
