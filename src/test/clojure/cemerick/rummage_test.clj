@@ -98,12 +98,12 @@
               623.7 [false :kw]}]
     (put-attrs config *test-domain-name* item)
     
-    (let [i2 (get-attrs config *test-domain-name* (:sdb/id item))]
-      (is (= "5" (i2 ":a")))
-      (is (= (:b item) (i2 ":b")))
-      (is (= "j" (i2 ":c")))
-      (is (= #{"false" ":kw"} (get i2 "623.7")))
-      (is (= "foo" (:sdb/id i2))))
+    (is (= {:sdb/id "foo"
+            ":a" "5"
+            ":b" #{"bar" "baz"}
+            ":c" "j"
+            "623.7" #{"false" ":kw"}}
+          (get-attrs config *test-domain-name* "foo")))
     
     ; selective attribute retrieval
     (is (= {":a" "5" ":c" "j"}

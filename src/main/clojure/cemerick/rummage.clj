@@ -79,7 +79,7 @@
 
 (defn- build-attrs
   [encode-fn item add-to?]
-  (for [[k v] item
+  (for [[k v] (dissoc item :sdb/id)
         v (as-collection v)
         :let [[name value] (encode-fn [k v])]]
     (ReplaceableAttribute. name value (if add-to?
