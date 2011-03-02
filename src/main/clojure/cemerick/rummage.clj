@@ -14,7 +14,7 @@
     (com.amazonaws.services.simpledb.model CreateDomainRequest DeleteDomainRequest
       ListDomainsRequest DomainMetadataRequest Attribute
       ReplaceableItem ReplaceableAttribute PutAttributesRequest
-      GetAttributesRequest UpdateCondition)))
+      GetAttributesRequest UpdateCondition BatchPutAttributesRequest)))
 
 (defn create-client
   "Creates a client for talking to a specific AWS SimpleDB
@@ -79,13 +79,9 @@
   (for [[k v] item
         v (as-collection v)
         :let [[name value] (encode-fn [k v])]]
-    (ReplaceableAttribute. name value (not (add-to? k)))))
-
-(defn- build-items
-  [schema items add-to?]
-  (for [i items]
-    (ReplaceableItem. ((:encode-id schema) (:sdb/id i))
-      (build-attrs (:encode schema) i add-to?))))
+    (ReplaceableAttribute. name value (if add-to?
+                                        (not (add-to? k))
+                                        true))))
 
 (defn- update-condition
   [encode-fn [key value :as expectation-pair] exists?]
@@ -97,8 +93,7 @@
   all values present at the same attrs/keys. You can pass an add-to?
   function (usually a set), and when it returns true for a key, values
   will be added to the set of values at that key, if any."
-  [client-config domain item & {:keys [add-to? expecting not-expecting]
-                                :or {add-to? #{}}}]
+  [client-config domain item & {:keys [add-to? expecting not-expecting]}]
   (when (and expecting not-expecting)
     (throw (IllegalArgumentException. "Cannot have both :expecting and :not-expecting update conditions")))
   (let [id ((:encode-id client-config) (:sdb/id item))
@@ -109,6 +104,20 @@
     (.putAttributes
       ^AmazonSimpleDBClient (or (:client client-config) client-config)
       (.withExpected (PutAttributesRequest. domain id attrs) update-condition))))
+
+(defn- build-items
+  [schema items add-to?]
+  (for [i items]
+    (ReplaceableItem. ((:encode-id schema) (:sdb/id i))
+      (build-attrs (:encode schema) i add-to?))))
+
+(defn put-all-attrs
+  "Puts the attrs for multiple items into a domain, with the same semantics as put-attrs"
+  [client-config domain items & {:keys [add-to?]}]
+  (doseq [batch (partition-all 25 (build-items client-config items add-to?))]
+    (.batchPutAttributes
+      ^AmazonSimpleDBClient (or (:client client-config) client-config)
+      (BatchPutAttributesRequest. domain batch))))
 
 (defn- into-map
   [decode-fn item-id attributes]
@@ -133,16 +142,6 @@
       (into-map (:decode client-config) item-id attrs))))
 
 #_(comment
-
-(defn batch-put-attrs
-  "Puts the attrs for multiple items into a domain, with the same semantics as put-attrs"
-  ([client domain items] (batch-put-attrs client domain items #{}))
-  ([client domain items add-to?]
-    (.batchPutAttributes client
-      (BatchPutAttributesRequest. domain
-        (map
-          #(ReplaceableItem. (to-sdb-str (:sdb/id %)) (replaceable-attrs % add-to?))
-          items)))))
 
 ;todo remove a subset of a set of vals
 (defn delete-attrs

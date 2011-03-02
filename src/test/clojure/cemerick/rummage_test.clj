@@ -78,14 +78,16 @@
 (defmacro defsdbtest
   [name & body]
   `(deftest ~name
-     (println '~name) ; lots of sleeping in these tests, give some indication of life
-     (binding [*test-domain-name* (test-domain-name)]
-       (is *test-domain-name*)
-       (create-domain client *test-domain-name*)
-       (try
-         ~@body
-         (finally
-           (delete-domain client *test-domain-name*))))))
+     (print '~name ": ") ; lots of sleeping in these tests, give some indication of life
+     (flush)
+     (time
+       (binding [*test-domain-name* (test-domain-name)]
+         (is *test-domain-name*)
+         (create-domain client *test-domain-name*)
+         (try
+           ~@body
+           (finally
+             (delete-domain client *test-domain-name*)))))))
 
 (defsdbtest test-put+get
   (let [config (assoc encoding/all-strings :client client :consistent-read? true)
@@ -151,3 +153,10 @@
       (put-attrs config *test-domain-name* {:sdb/id id :key id})
       (when-not (is (get-attrs config *test-domain-name* id))
         (throw (IllegalStateException. (str "Consistent read wasn't on item " id)))))))
+
+(defsdbtest test-batch-put
+  (let [config (assoc encoding/all-strings :client client :consistent-read? true)]
+    (put-all-attrs config *test-domain-name* (for [x (range 250)]
+                                               {:sdb/id x :key x}))
+    (doseq [id (map str (range 250))]
+      (is (get-attrs config *test-domain-name* id)))))
