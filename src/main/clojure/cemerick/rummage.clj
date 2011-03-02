@@ -328,47 +328,65 @@
       {::id (-> item .getName decode-id)})))
 
 (defn query
-  "Issue a query. When `q` is a string, it is submitted directly without any interpretation.
+  "Issue a query.
+
+   If the `client-config` map contains a truthy :consistent-read? value, then the query will
+   be performed with SDB's consistent read semantics.
+
+   When `q` is a string, it is submitted directly without any interpretation.
 
    When `q` is a map, it is interpreted to generate a corresponding query string,
    using the configuration provided to drive attribute name and value formatting.
 
    The query map has mandatory keys:
 
-   :select */id/count/[sequence-of-attrs]
-   :from domain-name
+     :select */id/count/[sequence-of-attrs]
+     :from domain-name
 
    and optional keys:
 
-   :where sexpr-based query expr supporting
+     :where sexpr-based query expr supporting
 
-    (not expr)
-    (and/or/intersection expr expr)
-    (=/!=/</<=/>/>=/like/not-like attr val)
-    (null/not-null attr)
-    (between attr val1 val2)
-    (in attr #(val-set})
+        (not expr)
+        (and/or/intersection expr expr)
+        (=/!=/</<=/>/>=/like/not-like attr-name val)
+        (null/not-null attr-name)
+        (between attr-name val1 val2)
+        (in attr-name #(val-set})
 
-   :order-by [attr] or [attr asc/desc]
-   :limit n
+     :order-by [attr-name] or [attr-name asc/desc]
+     :limit n
+
+   The keys in the query map can be keywords or symbols; e.g. these two queries are
+   functionally equivalent:
+
+     '{select * from foo}
+     '{:select * :from foo}
+
+   Depending on the semantics of the encoding implemented by the provided configuration,
+   attribute names and values in the query map should be specified using the same types as
+   they were when those attributes were put into SDB.
 
    When :select is
       count - returns a number
       id - returns a sequence of ids
-      * or [sequence-of-attrs] - returns a sequence of item maps, containing all or specified attrs.
+      * or [sequence-of-attr-names] - returns a sequence of item maps, containing all or specified attrs.
+
+   When the return value is a sequence of items, it will have the following slots in its metadata map:
+
+     :request-id - the ID of the request submitted to the SDB web service API
+     :box-usage - a measure of the resources utilized to process the query; see the SDB documentation
+                  for details.
+     :next-token - an opaque string token that, when present, indicates that additional query results
+                   are available.  This token can be provided as an optional third argument to `query`
+                   to obtain the next chunk of results.
+                   See `query-all` to get all results of a query in a single lazy seq.
 
    See:
 
       http://docs.amazonwebservices.com/AmazonSimpleDB/latest/DeveloperGuide/index.html?UsingSelect.html
 
-  for further details of select semantics.
-
-  If the `client-config` map contains a truthy :consistent-read? value, then the query will
-  be performed in SDB's consistent read mode.
-
-  `next-token`, if supplied, must be the value obtained from the :next-token attr of the metadata
-  of a previous call to the same query, e.g. (:next-token (meta last-result)). When provided,
-  the next batch of results is returned.  See `query-all` to get all results in a single lazy seq."
+   for further details of select semantics."
   ([client-config q] (query client-config q nil))
   ([client-config q next-token]
     (let [query (if (string? q)

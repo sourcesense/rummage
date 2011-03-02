@@ -1,0 +1,722 @@
+= Rummage
+
+http://github.com/cemerick/rummage[Rummage] is a Clojure client
+library for Amazon's http://aws.amazon.com/simpledb/[SimpleDB (SDB)].  It depends upon
+the standard http://aws.amazon.com/sdkforjava/[AWS SDK for Java],
+and provides a Clojure-idiomatic API for the SDB-related functionality
+therein.
+
+This is a fork of https://github.com/richhickey/sdb[Rich Hickey's original SDB client library implementation]
+that was later maintained in miscellaneous ways by various contributors on various forks.
+This is a nearly complete rewrite, made necessary by my needing/wanting
+https://docs.google.com/document/d/1K5p2RRVtvYxBNLEJuWGNf1iZak2ri8cI73joWu9K1W0/edit?hl=en&authkey=CMDR_6AF[various changes]
+(linked for historical/reference purposes only) compared to Rich's original implementation.
+
+[quote,http://www.etymonline.com/index.php?term=rummage]
+_____ 
+rummage
+    1520s, "act of arranging cargo in a ship," aphetic of M.Fr. _arrumage_
+    "arrangement of cargo," from _arrumer_ "to stow goods in the hold of a ship,"
+    from _a-_ "to" + _rumer_, probably from Germanic (cf. O.N. _rum_ "compartment in a ship,"
+    O.H.G. _rum_ "space," O.E. _rum_, see _room_).
+    Meaning "to search (the hold of a ship) thoroughly" first recorded 1620s.
+    Rummage sale (1858) originally was a sale at docks of unclaimed goods.
+_____    
+
+== Status
+
+This library is functionally completely new; literally, v0.0.1.  There will be changes.
+
+=== Current TODOs
+
+. Add/flesh out docstrings for the entire API + the stuff in encoding
+. Add notes on offline / local use (documented on https://github.com/richhickey/sdb[rhickey's readme])
+. Complete documentation in sections marked as TODO here
+. The default encoding for URLs doesn't seem great -- they don't sort lexicographically in a particularly useful way.
+Maybe something like "TLD domain [sub-domain sub-domain2 …] path".  I vaguely recall there being some standard 
+encoding like this for e.g. handling of dates in hadoop, etc.  Not in a rush to run into the pit that is URL
+encoding/parsing, though.
+. determine whether a default encoding configuration should be provided; that is, if a bare `client` is
+provided to e.g. `query` or `put-attrs`, should we just use one of the encoding schemes in
+`cemerick.rummage.encoding`?  If so, which one?  I'm all for simplicity, good defaults, and convention
+allowing for configuration, but I don't think any reasonable default exists (or perhaps I just haven't thought
+of one yet).
+
+== "Installation"
+
+Rummage is available in Maven central.  Add it to your Maven project's `pom.xml`:
+
+----
+<dependency>
+  <groupId>com.cemerick</groupId>
+  <artifactId>rummage</artifactId>
+  <version>0.0.1</version>
+</dependency>
+----
+
+or your leiningen/cake project.clj:
+
+----
+[com.cemerick/rummage "0.0.1"]
+----
+
+== Logging
+
+I strongly recommend squelching the AWS SDK's very verbose logging
+before using Rummage (the former spews a variety of stuff out on
+INFO that I personally think should be in DEBUG or TRACE).  You can
+do this with this snippet:
+
+----
+(.setLevel (java.util.logging.Logger/getLogger "com.amazonaws")
+  java.util.logging.Level/WARNING)
+----
+
+Translate as necessary if you're using log4j, etc.
+
+== Usage
+
+You should be familiar with http://aws.amazon.com/simpledb/[SDB itself]
+before sensibly using this library; in particular, you'll need to understand
+its data model and the semantics of the operations underlying Rummage's
+implementation, which are all http://docs.amazonwebservices.com/AmazonSimpleDB/latest/DeveloperGuide/[documented here].
+
+You'll first need to load the library and create a SDB client object
+to do anything:
+
+----
+(require '[cemerick.rummage :as sdb])
+(def client (sdb/create-client "your aws id" "your aws secret-key"))
+----
+
+`client` here is an instance of `com.amazonaws.services.simpledb.AmazonSimpleDBClient`.
+
+=== Administrative operations
+
+Once you have a `client` object, you can use all of Rummage's administrative operations:
+
+----
+=> (doseq [n ["foo" "bar"]]
+     (create-domain client n))
+nil
+=> (list-domains client)
+("bar" "foo")
+=> (domain-metadata client "foo")
+{:itemNamesSizeBytes 0, :attributeNamesSizeBytes 0, :attributeValueCount 0, :itemCount 0,
+ :attributeNameCount 0, :attributeValuesSizeBytes 0, :timestamp 1299688823}
+=> (doseq [n (list-domains client)]
+     (delete-domain client n))
+nil
+(list-domains client)
+()
+----
+
+=== Configuration
+
+SimpleDB stores all data as strings, so you have to specify how Rummage should encode
+and decode your data.  This is done by providing a configuration map as the first
+argument to each of Rummage's functions; this configuration map must contain a set
+of functions that encode data into strings for storage in SDB, and decode strings
+retrieved from SDB into (presumably) richer data types.
+
+The `cemerick.rummage.encoding` namespace provides a number of configuration maps implementing
+encoding strategies suitable for (hopefully) most datasets that you can use without modification
+to encode your data for storage in SDB.  All you need to do is `assoc` your `client` object into
+your desired baseline configuration map:
+
+----
+=> (require '[cemerick.rummage.encoding :as enc])
+nil
+=> (def config (assoc enc/keyword-strings :client client))
+#'user/config
+----
+
+[NOTE]
+====
+See <<encoding-details>> for a detailed discussion of what functions must be found in
+a configuration map, an enumeration of the canned configurations available in the
+`cemerick.rummage.encoding` namespace, and how you can easily build your own
+configurations that map item names to particular encoding strategies.
+====
+
+The `keyword-strings` base configuration is used for most of the examples here, which
+naively converts all item values to strings when putting, does nothing to those string values
+upon retrieval, but does restore keys to keywords.
+
+Note that all of the administrative functions accept either a bare `client` or a configuration
+map containing a `com.amazonaws.services.simpledb.AmazonSimpleDBClient` object mapped to `:client`:
+
+----
+=> (create-domain config "demo")
+nil
+----
+
+=== Put, get, and delete attributes
+
+Rummage supports SDB's operations for putting, getting, and deleting items, as well as
+batch-put and batch-delete operations.
+
+==== What is an item?
+
+"Item" is a SimpleDB term that refers to a basket of key/value pairs identified by
+an "item name".  Translated to Clojure/Rummage terms, each item is a
+http://en.wikipedia.org/wiki/Multimap[_multimap_] that contains:
+
+. the "item name" (interchangeably referred to as the item's id here) mapped to
+`:cemerick.rummage/id`
+. a slot for each attribute key in the item, the value for which is either
+a scalar (e.g. string, number, keyword, date, etc) or a set of scalars
+
+Rummage reserves the key `::sdb/id` (which expands to `:cemerick.rummage/id` assuming you've aliased
+the `cemerick.rummage` namespace to `sdb`) to identify the ID of items (called `itemName()` in the SDB documentation).
+It will expect every item provided to `put-attrs` or `batch-put-attrs` to contain an `::sdb/id` slot,
+and items loaded via `get-attrs`, `query`, and `query-all` will have their IDs mapped to `::sdb/id`.
+
+==== Singular get, put, and delete
+
+Nothing here should be surpising or particularly interesting:
+
+----
+=> (create-domain config "demo")
+nil
+=> (put-attrs config "demo" {::sdb/id "foo" :name "value" :key #{50 60 65}})
+nil
+=> (get-attrs config "demo" "foo")
+{:key #{"60" "50" "65"}, :name "value", :cemerick.rummage/id "foo"}
+----
+
+You can optionally specify a limited set of keys to delete, or a limited mapping of
+key/value pairs to delete:
+
+----
+=> (delete-attrs config "demo" "foo" :attrs {:key #{60}})
+nil
+=> (get-attrs config "demo" "bar")
+{:key #{"50" "65"}, :name "value", :cemerick.rummage/id "foo"}
+=> (delete-attrs config "demo" "foo" :attrs #{:key})
+nil
+=> (get-attrs config "demo" "foo")
+{:name "value", :cemerick.rummage/id "foo"}
+=> (delete-attrs config "demo" "foo")
+nil
+=> (get-attrs config "demo" "foo")
+nil
+----
+
+You can attach conditions to puts and deletes; see <<expectations>> for details.
+
+[NOTE]
+====
+[[consistent-read]]
+If you want to use consistent-read semantics (as described in
+http://docs.amazonwebservices.com/AmazonSimpleDB/latest/DeveloperGuide/ConsistencySummary.html[various]
+http://docs.amazonwebservices.com/AmazonSimpleDB/latest/DeveloperGuide/ApplicationConcurrency.html[parts]
+of the SDB documentation) when using the `get-attrs` and `query` functions,
+`assoc` a true value into your configuration map's `:consistent-read?` slot.
+====
+
+==== Batch put and delete
+
+`batch-put-attrs` and `batch-delete-attrs` each accept any number of items or
+delete specs, respectively.  (SimpleDB supports batch puts and deletes of only 25 items at a time;
+Rummage transparently makes as many requests as are necessary to complete each batch put or
+batch delete operation.)
+
+----
+=> (batch-put-attrs config "demo" [{::sdb/id "foo" :name "value" :key 50}
+                                   {::sdb/id "bar" :name "value" :key #{60 65}}
+                                   {::sdb/id "baz" :name "value" :key 70}])
+nil
+=> (get-attrs config "demo" "baz")
+{:key "70", :name "value", ::sdb/id "baz"}
+----
+
+`batch-delete-attrs` accepts a collection of "delete specs": vectors that contain an item
+ID as their first element, and an optional set or map as a second element.  When
+a set is provided, then only attributes with names corresponding to keys in that set are
+deleted; when a map is provided, only attributes with names and values corresponding to
+pairs in that map are deleted:
+
+----
+=> (batch-delete-attrs config "demo" [["foo" #{:key}]
+                                      ["bar" {:key 60}]
+                                      ["baz"]])
+nil
+=> (get-attrs config "demo" "foo")
+{:name "value", :cemerick.rummage/id "foo"}
+=> (get-attrs config "demo" "bar")
+{:key "65", :name "value", :cemerick.rummage/id "bar"}
+=> (get-attrs config "demo" "baz")
+nil
+----
+
+==== Appending (instead of replacing) values
+
+All put operations replace existing item values for the same keys by default.  If you would
+like to add/append values for an existing item key, `put-attrs` and `batch-put-attrs` optionally
+accept an `:add-to?` argument: a set of item keys for which item values should be appended,
+rather than replaced:
+
+----
+=> (put-attrs config "demo" {::sdb/id "appending" :name 50})
+nil
+=> (get-attrs config "demo" "appending")
+{:name "50", ::sdb/id "appending"}
+=> (put-attrs config "demo" {::sdb/id "appending" :name 60})
+nil
+=> (get-attrs config "demo" "appending")
+{:name "60", ::sdb/id "appending"}
+=> (put-attrs config "demo" {::sdb/id "appending" :name 70} :add-to? #{:name})
+nil
+=> (get-attrs config "demo" "appending")
+{:name #{"70" "60"}, ::sdb/id "appending"}
+----
+
+[[expectations]]
+==== Conditional puts and deletes
+
+Both `delete-attrs` and `put-attrs` can be provided with values defining conditions
+under which their corresponding requests should fail:
+
+----
+=> (put-attrs config "demo" {::sdb/id "conditional" :name 70})
+nil
+=> (put-attrs config "demo" {::sdb/id "conditional" :name 100} :not-expecting :name)
+#<CompilerException Status Code: 409, AWS Request ID: a5e71a72-76f2-7d42-e10c-958a773df53b,
+  AWS Error Code: ConditionalCheckFailed,
+  AWS Error Message: Conditional check failed. Attribute (name) value exists (NO_SOURCE_FILE:0)>
+=> (put-attrs config "demo" {::sdb/id "conditional" :name 100} :expecting [:other-name 100])
+#<CompilerException Status Code: 404, AWS Request ID: 61939a96-f79f-678e-1e4f-7d29ebbe8e02,
+  AWS Error Code: AttributeDoesNotExist,
+  AWS Error Message: Attribute (other-name) does not exist (NO_SOURCE_FILE:0)>
+=> (put-attrs config "demo" {::sdb/id "conditional" :name 100} :expecting [:name 50])
+#<CompilerException Status Code: 409, AWS Request ID: 6bac4305-6877-c1bb-b8b5-c07b08e83d07,
+  AWS Error Code: ConditionalCheckFailed,
+  AWS Error Message: Conditional check failed. Attribute (name) value is (70) but was expected (50) (NO_SOURCE_FILE:0)>
+=> (put-attrs config "demo" {::sdb/id "conditional" :name 100} :expecting [:name 70])
+nil
+=> (get-attrs config "demo" "conditional")
+{:name "100", ::sdb/id "conditional"}
+=> (delete-attrs config "demo" "conditional" :not-expecting :name)
+#<CompilerException Status Code: 409, AWS Request ID: ca98837b-8be1-9ec9-66fe-5989776fb3bf,
+  AWS Error Code: ConditionalCheckFailed,
+  AWS Error Message: Conditional check failed. Attribute (name) value exists (NO_SOURCE_FILE:0)>
+=> (delete-attrs config "demo" "conditional" :expecting [:name 100])
+nil
+=> (get-attrs config "demo" "conditional")
+nil
+----
+
+=== Querying
+
+You can issue ad-hoc queries over data you've stored in SimpleDB.  SDB's canonical representation of
+these queries is textual, and vaguely resembles SQL:
+
+----
+(batch-put-attrs config "demo" [{::sdb/id "foo" :name "Claremont" :key 50}
+                                {::sdb/id "bar" :name "Burlington" :key #{60 65}}
+                                {::sdb/id "baz" :name "Keene" :key 70}])
+nil
+=> (query config "select key from demo where key is not null")
+({:key "50", :cemerick.rummage/id "foo"}
+ {:key #{"60" "65"}, :cemerick.rummage/id "bar"}
+ {:key "70", :cemerick.rummage/id "baz"})
+----
+
+As when retrieving items using `get-attrs`, `query` uses the encoding functions in the
+the configuration map provided as its first argument.
+
+[NOTE]
+====
+You can optionally use <<consistent-read,SDB's consistent read semantics>> when querying.
+====
+
+Using strings to query SDB works (and may be necessary if you already have canned SDB
+queries in a "legacy" codebase or are integrating with a system that somehow produces SDB queries
+dynamically), but doing so leaves you to remember SDB's quoting rules and replicate the
+encoding that was used to store attribute names and values.  Rummage provides a Clojure map-based
+DSL for querying SDB:
+
+----
+=> (query config '{select count from demo})
+3
+=> (query config '{select id from demo})
+("bar" "baz" "foo")
+=> (query config '{select [:key] from demo where (> :key 60)})
+({:key #{"60" "65"}, :cemerick.rummage/id "bar"}
+ {:key "70", :cemerick.rummage/id "baz"})
+=> (query config '{select [:key] from demo where (like ::sdb/id "ba%")})
+({:key #{"60" "65"}, :cemerick.rummage/id "bar"}
+ {:key "70", :cemerick.rummage/id "baz"})
+=> (query config '{select [:key] from demo where (and (like ::sdb/id "ba%")
+                                                   (< :key 70))})
+({:key #{"60" "65"}, :cemerick.rummage/id "bar"})
+=> (query config '{select [:name] from demo where (!= :name "Keene")})
+({:name "Burlington", :cemerick.rummage/id "bar"}
+ {:name "Claremont", :cemerick.rummage/id "foo"})
+=> (query config '{select * from demo where (not-null :key) order-by [:key]})
+({:key "50", :name "Claremont", :cemerick.rummage/id "foo"}
+ {:key #{"60" "65"}, :name "Burlington", :cemerick.rummage/id "bar"}
+ {:key "70", :name "Keene", :cemerick.rummage/id "baz"})
+=> (query config '{select * from demo order-by [:key desc] where (not-null :key)})
+({:key "70", :name "Keene", :cemerick.rummage/id "baz"}
+ {:key #{"60" "65"}, :name "Burlington", :cemerick.rummage/id "bar"}
+ {:key "50", :name "Claremont", :cemerick.rummage/id "foo"})
+=> (query config '{select * from demo order-by [:key desc] where (not-null :key) limit 1})
+({:key "70", :name "Keene", :cemerick.rummage/id "baz"})
+----
+
+Since this query style is map-based, you can generate it dynamically.  Additionally, you
+can easily interpolate values – parameters, keys, domain names, comparison
+values, etc – into query map literals using syntax-quote:
+
+----
+(let [domain-name "demo"
+      key-values [50 70]]
+  (query config `{select [:name] from ~domain-name where (in :key ~key-values)}))
+({:name "Claremont", :cemerick.rummage/id "foo"} {:name "Keene", :cemerick.rummage/id "baz"})
+----
+
+[NOTE]
+====
+Rummage's `select-string` function is used to convert a query map to a string, with help in part
+from the configuration map carrying <<encoding-details,encoding functions>>. 
+You can use this function yourself to help in your understanding of how query maps are
+translated to query strings:
+
+----
+=> (select-string config '{select [:key] from demo where (and (like ::sdb/id "ba%")
+                                                           (< :key 70))})
+"select `key` from `demo` where (itemName() like 'ba%') and (`key` < '70')"
+---- 
+====
+
+The examples above demonstrate the query map DSL reasonably well, but one should refer to the
+docstring for the `query` function for an authoritative list of comparisons,
+information about return values, etc., and to the
+http://docs.amazonwebservices.com/AmazonSimpleDB/latest/DeveloperGuide/UsingSelect.html[SDB query documentation]
+for details on semantics. 
+
+==== `query-all`
+
+`query` performs a single request to SDB, which can potentially return only a portion of a
+query's results.  If you want to obtain all of the results matching a query, use
+the `query-all` function, which will lazily page through results of a query for you as you consume
+them, using the `:next-token` metadata provided by the seqs returned by `query`:
+
+----
+=> (batch-put-attrs config "demo" (for [x (range 5000)]
+                                    {::sdb/id x :key x}))
+nil
+=> (count (query-all config `{select id from demo}))
+5000
+----
+
+Note that `query-all` will automatically bump the `:limit` of a query up to the SDB maximum of 2500
+(the default is 100) to minimize the number of network requests to obtain the full resultset. 
+
+[[encoding-details]]
+=== Data Encoding Schemes
+
+The configuration map you provide as the first argument to most of Rummage's functions defines
+how data is encoded to strings for storage in SDB and how strings retrieved from SDB are
+decoded to non-string item keys and values.  The encoding portion of the configuration map is
+also used to encode keys and values to strings when constructing string queries from the query
+maps accepted by `query`.
+
+Configuration maps should contain the following encoding-related functions:
+
+`:encode-id`::
+    encodes item IDs (values in item maps mapped to `::sdb/id`) to strings
+`:decode-id`::
+    the dual of the `:encode-id` function; decodes string item IDs retrieved from SDB, potentially to some other type of value
+`:encode`::
+    encodes item keys and values to attribute name and value strings.  Must provide a 1-arg
+    arity that will receive item keys and return a corresponding encoded string, and a 2-arg arity
+    that will receive an item key and value, and return a vector containing the corresponding encoded strings
+`:decode`::
+    the dual of the `:encode` function; decodes string item names and values retreived from SDB
+
+If your needs warrant it, you can write your own encoding and decoding functions and use them
+in configuration maps with Rummage.  However, the `cemerick.rummage.encoding` namespace provides
+a number of configuration maps (and functions that return configuration maps) implementing
+encoding strategies suitable for (hopefully) most datasets that you can use without modification
+to encode your data for storage in SDB.  These are described in detail here:
+
+[[all-strings]]
+==== `cemerick.rummage.encoding/all-strings`
+
+The simpliest possible encoding scheme, `all-strings` converts all outgoing data to strings
+using `str`, and passes through all retrieved item strings unchanged.
+
+----
+=> (def config (assoc enc/all-strings :client client))
+#'user/config
+=> (put-attrs config "demo" {::sdb/id "all-strings" :keyword 42
+                             "name" :value :date (java.util.Date.)})
+nil
+=> (get-attrs config "demo" "all-strings")
+{":keyword" "42", ":date" "Wed Mar 09 12:39:57 EST 2011",
+ "name" ":value", ::sdb/id "all-strings"}
+----
+
+This can be very useful when working with SDB data that has been stored / needs to be accessible
+from other SDB clients.
+
+==== `cemerick.rummage.encoding/keyword-strings`
+
+This encoding scheme stores all attribute values as strings just like <<all-strings,`all-strings`>>, but
+provides for round-tripping of keywords as attribute names.
+
+----
+=> (def config (assoc enc/keyword-strings :client client))
+#'user/config
+=> (put-attrs config "demo" {::sdb/id "keyword-strings" :keyword 42
+                             :name :value :date (java.util.Date.)})
+nil
+=> (get-attrs config "demo" "keyword-strings")
+{:date "Wed Mar 09 12:41:31 EST 2011", :keyword "42",
+ :name ":value", ::sdb/id "keyword-strings"}
+----
+
+Note that an error will occur if you attempt to store items that have non-keyword keys
+using the this configuration.
+
+[[all-prefixed-config]]
+==== `cemerick.rummage.encoding/all-prefixed-config`
+
+`all-prefixed-config` is a function that returns a configuration map that use a defined
+set of prefixed type tags along with roundtrippable string encodings to store item data
+of many different types, and restore that item data with its original types upon retrieval.  
+
+----
+=> (def config (assoc (enc/all-prefixed-config) :client config))
+nil
+=> (put-attrs config "demo" {::sdb/id "prefixed-data" :keyword 42
+                             :ns/name :value :date (java.util.Date.)
+                             true false "float value" 108.6})
+nil
+(get-attrs config "demo" "prefixed-data")
+{:keyword 42, true false, "float value" 108.6,
+ :date #<Date Thu Mar 10 10:01:04 EST 2011>,
+ :ns/name :value, :cemerick.rummage/id "prefixed-data"}
+----
+
+Notice that the retrieved data has the same types as the stored data; in fact, the
+map returned here by `get-attrs` is equal to the map stored in SDB by `put-attrs`
+(as in, `(= stored-map retreived-map)`).  So you can see what the attributes look like
+in their encoded form, let's take a look at that item using the `all-strings` config
+(which, remember, does no decoding of string data retrieved from SDB):
+
+----
+(get-attrs (assoc enc/all-strings :client client) "demo" "s:prefixed-data")
+{"k:keyword" "i:4611686018427387945", "z:true" "z:false",
+ "s:float value" "f:5 002 1.0860000000000000", "k:date" "D:2011-03-10T15:04:05.419+0000",
+ "k:ns/name" "k:value", :cemerick.rummage/id "s:prefixed-data"}
+----
+
+The supported types and prefixes used by configurations produced by `all-prefixed-config`
+are controlled by the <<formatting-maps,formatting map>> provided as an argument to
+`all-prefixed-config`; a <<default-formatting-map,default formatting map>> is used if none
+is explicitly provided.
+
+[WARNING]
+====
+[[all-prefixed-config-like-warning]]
+Since all stored values have a type prefix, and `like` queries may only have a wildcard at the beginning or end
+of the query value, values stored using this configuration cannot be successfully queried with a prefix `like`
+pattern (e.g. `(like :attr-name "%foo")`)
+====
+
+[[name-typed-values-config]]
+==== `cemerick.rummage.encoding/name-typed-values-config`
+
+`name-typed-values-config` is a function that returns a configuration map.
+
+This scheme is very similar to
+<<all-prefixed-config,`all-prefixed-config`>>, but restricts the use of type prefixes to attribute
+names (specifically, to namespaces of keywords used as attribute keys) and requires that all
+values for each attribute are of the same type, indicated by the attribute name's prefix.
+Within that structure, all values are stored using roundtrippable string encodings
+and are restored to their original types upon retrieval.
+
+----
+=> (def config (assoc (enc/name-typed-values-config) :client client))
+#'user/config
+=> (put-attrs config "demo" {::sdb/id "name-typed-values" :i/keyword 42
+                             :k/name :value :D/date (java.util.Date.)
+                             :z/true false :f/float-value 108.6})
+nil
+=> (get-attrs config "demo" "name-typed-values")
+{:i/keyword 42, :D/date #<Date Thu Mar 10 10:20:15 EST 2011>, :k/name :value,
+ :z/true false, :f/float-value 108.6, :cemerick.rummage/id "name-typed-values"}
+----
+
+Notice that, in contrast to <<all-prefixed-config,`all-prefixed-config`>>, values have no prefixes.
+The type metadata for each attribute is stored instead in the namespaces of the keywords used
+as attribute keys. (An exception will occur if you attempt to store an attribute that does not use
+a namespaced keyword for a key.)  Let's take a look at how this translates into the strings
+stored in SDB:
+ 
+----
+(get-attrs (assoc enc/all-strings :client client) "demo" "s:name-typed-values")
+{"k:i/keyword" "4611686018427387945", "k:D/date" "2011-03-10T15:20:15.806+0000",
+ "k:k/name" "value", "k:z/true" "false", "k:f/float-value" "5 002 1.0860000000000000",
+ :cemerick.rummage/id "s:name-typed-values"}
+----
+
+Because no prefixes are used in the encoded values, prefixed `like` queries will work, in
+contrast to <<all-prefixed-config-like-warning,`all-prefixed-config`>>.  The tradeoff is that
+item keys must all be namespaced keywords, with namespaces corresponding to the prefixes specified
+in the formatting map.
+
+The supported types and prefixes used by configurations produced by `name-typed-values-config`
+are controlled by the <<formatting-maps,formatting map>> provided as an argument to
+`name-typed-values-config`; a <<default-formatting-map,default formatting map>> is used if none
+is explicitly provided.
+
+[[fixed-domain-schema]]
+==== Fixed schemas via `cemerick.rummage.encoding/fixed-domain-schema`
+
+If:
+
+a. your dataset has attributes whose values are of constant types, and
+b. you can specify those attribute names and their corresponding types ahead of time,
+
+then you can use configuration maps produced by the `fixed-domain-schema` function, which
+avoids all of the shortcomings of `all-prefixed-config`-derived configurations (e.g.
+breaks prefixed `like` queries) and `name-typed-values-config`-derived configurations (e.g.
+requiring attribute keys to be namespaced keywords).
+
+----
+=> (def config (assoc
+                 (enc/fixed-domain-schema {:name String
+                                           :birthday java.util.Date
+                                           "age" Integer
+                                           true Boolean})
+                 :client client))
+#'user/config
+=> (put-attrs config "demo" {::sdb/id "fixed-domain-schema"
+                             :birthday (java.util.Date.)
+                             "age" 26
+                             true false})
+=> (get-attrs config "demo" "fixed-domain-schema")
+{"age" 26, true false, :birthday #<Date Thu Mar 10 10:45:25 EST 2011>,
+ :cemerick.rummage/id "fixed-domain-schema"}
+----
+
+Again, the items are retrieved and decoded such that their types are the same as those in
+the map provided to `put-attrs`.  Let's take a look at how those attributes are encoded
+for storage:
+
+----
+=> (get-attrs (assoc enc/all-strings :client client) "demo" "s:fixed-domain-schema")
+{"s:age" "4611686018427387929", "z:true" "false",
+ "k:birthday" "2011-03-10T15:45:25.925+0000", :cemerick.rummage/id "s:fixed-domain-schema"}
+----
+
+As you can see, item keys and the item ID itself are encoded with prefixes as in `all-prefixed-config` and
+`name-typed-values-config`, but the encoded attribute values have no prefixes.
+
+Of course, we're using SDB, you can add new "columns" to the data that can be encoded by
+a `fixed-domain-schema` configuration by obtaining a new configuration map using a different
+"schema" map provided to the `fixed-domain-schema` function:
+
+----
+=> (put-attrs config "demo" {::sdb/id "fixed-domain-schema"
+                             :unknown-key 42})
+#<java.lang.IllegalArgumentException: No formatter available for prefix :unknown-key>
+=> (def config (assoc
+                 (enc/fixed-domain-schema {:name String
+                                           :birthday java.util.Date
+                                           "age" Integer
+                                           true Boolean
+                                           ;; adding new slot ("column"?) to schema
+                                           :unknown-key Integer})
+                 :client client))
+#'user/config
+=> (put-attrs config "demo" {::sdb/id "fixed-domain-schema"
+                             :unknown-key 42})
+nil
+=> (get-attrs config "demo" "fixed-domain-schema")
+{"age" 26, :unknown-key 42, true false,
+ :birthday #<Date Thu Mar 10 10:45:25 EST 2011>, :cemerick.rummage/id "fixed-domain-schema"}
+----
+
+Depending on your dataset, application requirements, and personal preferences, this process of mapping
+attribute keys (`:name`, `"age"`, etc) to value types – similar to how tables are defined in relational
+databases – is likely either unreasonably restrictive or comfortingly familiar.
+
+[[formatting-maps]]
+==== Formatting Maps
+
+;; TODO
+
+[[default-formatting-map]]
+===== Default Formatting Map
+
+`cemerick.rummage.encoding/prefix-formatting` is the default formatting map used by
+the configuration-map-producing functions in that namespace (
+<<name-typed-values-config,`name-typed-values-config`>>,
+<<all-prefixed-config,`all-prefixed-config`>>,
+and <<fixed-domain-schema,`fixed-domain-schema`>>).  It contains mappings for the
+following types (with prefixes for those encoding schemes that use them):
+
+.Default formatting map's types
+[width="75%",options="header"]
+|===========================
+|Type|Prefix|Example value|Example encoded value (does not include prefix)|Notes
+|`String`|`s`|`"foo"`|`"foo"`|
+|`clojure.lang.Keyword`|`k`|`:ns/name`|`"ns/name"`|
+|`Long`|`i`|`42`|`"4611686018427387945"`|Maximum absolute value: `(/ Long/MAX_VALUE 2)` (stored in `cemerick.rummage.encoding/max-abs-integer`)
+|`Integer`|`i`|`42`|`"4611686018427387945"`|Always decodes to a concrete long.
+|`Double`|`f`|`108.6`|"5 002 1.0860000000000000"|
+|`Float`|`f`|`108.6`|"5 002 1.0860000000000000"|Always decodes to a concrete double.
+|`Boolean`|`z`|`true`|`"true"`|
+|`java.net.URL`|`U`|`(URL. "http://clojure.org")`|`"http://clojure.org"`|
+|`java.util.Date`|`D`|(Date.)|`"2011-03-10T14:46:52.669+0000"`|Dates are always normalized to UTC (which ensures that their encoded forms sort properly when compared lexicographically) and encoded using ISO 8601
+|===========================
+
+== Building Rummage
+
+Have maven.  From the command line:
+
+----
+$ mvn clean install
+----
+
+*The tests are all live*, so:
+
+1. They create and delete domains (though with unique names).
+2. They aren't written to be particularly efficient w.r.t. SDB usage. If you do decide to run the tests, the associated fees should be trivial (or nonexistent if your account is under the SDB free usage cap).
+
+In any case, you are so warned.  Make a new AWS account dedicated to testing if you're concerned on either count. 
+
+Since the tests are live, you either need to add your AWS credentials to your
+`~/.m2/settings.xml` file as properties, or specify them on the command line
+using `-D` switches:
+
+----
+$ mvn -Daws.id=XXXXXXX -Daws.secret-key=YYYYYYY clean install
+----
+
+Or, you can skip the tests entirely:
+
+----
+$ mvn -Dmaven.test.skip=true clean install
+----
+
+In any case, you'll find a built `.jar` file in the `target` directory, and in
+its designated spot in `~/.m2/repository` (assuming you ran `install` rather than
+e.g. `package`).
+
+== Need Help?
+
+Ping `cemerick` on freenode irc or twitter if you have questions
+or would like to contribute patches.
+
+== License
+
+Copyright © 2011 Chas Emerick, Rich Hickey, and other contributors
+
+Licensed under the EPL. (See the file epl-v10.html.)
