@@ -25,31 +25,34 @@
     (AmazonSimpleDBClient. (com.amazonaws.auth.BasicAWSCredentials. id secret-key)
       (.withUserAgent client-config "Rummage - SDB for Clojure"))))
 
+(defn- ^AmazonSimpleDBClient client
+  [client-or-config]
+  (or (:client client-or-config) client-or-config))
+
 (defn create-domain
   "Creates a domain with the specified name.  Returns successfully if the domain
    already exists."
-  [client name]
-  (.createDomain ^AmazonSimpleDBClient (or (:client client) client)
-    (CreateDomainRequest. name)))
+  [client-or-config name]
+  (.createDomain (client client-or-config) (CreateDomainRequest. name)))
 
 (defn delete-domain
   "Deletes the named domain."
-  [client name]
-  (.deleteDomain ^AmazonSimpleDBClient (or (:client client) client)
+  [client-or-config name]
+  (.deleteDomain (client client-or-config)
     (DeleteDomainRequest. name)))
 
 (defn- list-domains*
-  [client next-token]
+  [client-or-config next-token]
   (let [req (-> (ListDomainsRequest.) (.withNextToken next-token))
-        res (.listDomains ^AmazonSimpleDBClient (or (:client client) client) req)]
+        res (.listDomains (client client-or-config) req)]
     (concat (.getDomainNames res)
       (when (.getNextToken res)
         (list-domains* client (.getNextToken res))))))
 
 (defn list-domains
   "Returns a sequence of all domain names available from the given client."
-  [client]
-  (list-domains* client nil))
+  [client-or-config]
+  (list-domains* (client client-or-config) nil))
 
 (def domain-metadata-keys
   #{:timestamp :attributeValuesSizeBytes :attributeNameCount :itemCount
@@ -57,9 +60,9 @@
 
 (defn domain-metadata 
   "Returns a map of domain metadata"
-  [client domain]
+  [client-or-config domain]
   (select-keys
-    (-> ^AmazonSimpleDBClient (or (:client client) client)
+    (-> (client client-or-config)
       (.domainMetadata (DomainMetadataRequest. domain))
       bean)
     domain-metadata-keys))
@@ -102,7 +105,7 @@
                            expecting (update-condition (:encode client-config) (as-collection expecting) true)
                            not-expecting (update-condition (:encode client-config) [not-expecting] false))]
     (.putAttributes
-      ^AmazonSimpleDBClient (or (:client client-config) client-config)
+      (client client-config)
       (.withExpected (PutAttributesRequest. domain id attrs) update-condition))))
 
 (defn- build-items
@@ -116,7 +119,7 @@
   [client-config domain items & {:keys [add-to?]}]
   (doseq [batch (partition-all 25 (build-items client-config items add-to?))]
     (.batchPutAttributes
-      ^AmazonSimpleDBClient (or (:client client-config) client-config)
+      (client client-config)
       (BatchPutAttributesRequest. domain batch))))
 
 (defn- into-map
@@ -137,7 +140,7 @@
               (.withAttributeNames (->> attr-names
                                      (map #((:encode client-config) [% nil]))
                                      (map first))))
-        res (.getAttributes ^AmazonSimpleDBClient (or (:client client-config) client-config) req)]
+        res (.getAttributes (client client-config) req)]
     (when-let [attrs (-> res .getAttributes seq)]
       (into-map (:decode client-config) item-id attrs))))
 
