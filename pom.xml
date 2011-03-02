@@ -39,10 +39,9 @@
             <version>1.1.5</version>
         </dependency>
         <dependency>
-            <groupId>org.clojure</groupId>
-            <artifactId>clojure-contrib</artifactId>
-            <version>1.2.0</version>
-            <scope>test</scope>
+            <groupId>com.cemerick</groupId>
+            <artifactId>utc-dates</artifactId>
+            <version>0.0.1</version>
         </dependency>
     </dependencies>
 

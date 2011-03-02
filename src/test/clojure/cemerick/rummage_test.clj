@@ -1,7 +1,6 @@
 (ns cemerick.rummage-test
   (:use [cemerick.rummage :as sdb]
-    clojure.test
-    clojure.contrib.core)
+    clojure.test)
   (:require [cemerick.rummage.encoding :as encoding]))
 
 #_(do
