@@ -1,7 +1,8 @@
 (ns cemerick.rummage-test
-  (:use cemerick.rummage
+  (:use [cemerick.rummage :as sdb]
     clojure.test
-    clojure.contrib.core))
+    clojure.contrib.core)
+  (:require [cemerick.rummage.encoding :as encoding]))
 
 #_(do
     (System/setProperty "aws.id" "")
@@ -66,79 +67,68 @@
                                            set))
       "Domain listing failed")
     
+    (let [metadata (domain-metadata client (first domain-names))]
+      (is (= domain-metadata-keys (set (keys metadata))))
+      (is (every? number? (vals metadata))))
+    
     (doseq [dn domain-names] (delete-domain client dn))
     (wait-for-condition #(empty? (filter test-domain-name? (list-domains client)))
       "Domain deletion failed")))
 
-#_(comment (defmacro defsqstest
+(defmacro defsdbtest
   [name & body]
   `(deftest ~name
      (println '~name) ; lots of sleeping in these tests, give some indication of life
-     (binding [*test-queue-url* (create-queue client (test-queue-name))]
+     (binding [*test-domain-name* (test-domain-name)]
+       (is *test-domain-name*)
+       (create-domain client *test-domain-name*)
        (try
-         (is *test-queue-url*)
          ~@body
          (finally
-           (delete-queue client *test-queue-url*))))))
+           (delete-domain client *test-domain-name*))))))
 
-(defsqstest test-list-queues
-  (let [msg (uuid)]
-    ; sending a msg seems to "force" the queue's existence in listings
-    (send client *test-queue-url* msg)
-    (wait-for-condition #((set (list-queues client)) *test-queue-url*)
-      "Created queue not visible in result of list-queues")))
+(defsdbtest test-put+get
+  (let [config (assoc encoding/all-strings :client client :consistent-read? true)
+        item {:sdb/id "foo"
+              :a 5
+              :b #{"bar" "baz"}
+              :c 'j
+              623.7 [false :kw]}]
+    (put-attrs config *test-domain-name* item)
+    
+    (let [i2 (get-attrs config *test-domain-name* (:sdb/id item))]
+      (is (= "5" (i2 ":a")))
+      (is (= (:b item) (i2 ":b")))
+      (is (= "j" (i2 ":c")))
+      (is (= #{"false" ":kw"} (get i2 "623.7")))
+      (is (= "foo" (:sdb/id i2))))
+    
+    ; selective attribute retrieval
+    (is (= {":a" "5" ":c" "j"}
+          (select-keys
+            (get-attrs config *test-domain-name* (:sdb/id item) ":a" ":c")
+            [":a" ":c"])))))
 
-(defsqstest test-queue-attrs
-  (let [{:strs [VisibilityTimeout MaximumMessageSize] :as base-attrs} (queue-attrs client *test-queue-url*)
-        expected {"VisibilityTimeout" "117" "MaximumMessageSize" "1535"}]
-    (is (and VisibilityTimeout MaximumMessageSize))
-    (queue-attrs client *test-queue-url* expected)
-    (wait-for-condition #(= expected
-                           (->> (queue-attrs client *test-queue-url*)
-                             (filter (comp (set (keys expected)) first))
-                             (into {})))
-      "Queue attribute test failed after waiting for test condition")))
 
-(defn- wait-for-full-queue
-  [q min-cnt queue-name]
-  (wait-for-condition #(-> (queue-attrs client q)
-                         (get "ApproximateNumberOfMessages")
-                         Integer/parseInt
-                         (> min-cnt))
-    (str queue-name " queue never filled up")))
 
-(defsqstest test-polling-receive
-  (let [data (range 100)
-        q *test-queue-url*]
-    ; we want to be testing polling-receive's ability to wait when there's nothing available
-    (future (doseq [x data]
-              (send client q (str x))))
-    (wait-for-full-queue *test-queue-url* 50 "polling-receive")
-    (is (== (apply + data)
-          (->>
-            (polling-receive client *test-queue-url* :max-wait 10000)
-            (map (deleting-consumer client (comp read-string :body)))
-            (apply +))))))
+(defsdbtest test-inconsistent-read
+  (let [config (assoc encoding/all-strings :client client)
+        domain-name *test-domain-name*]
+    (wait-for-condition
+      (fn []
+        (loop [[id & keys] (->> (repeatedly rand)
+                             (map str)
+                             (take 100))]
+          (when id
+            (put-attrs config domain-name {:sdb/id id :key id})
+            (if (get-attrs config domain-name id)
+              (recur keys)
+              true))))
+      "Inconsistent read was never inconsistent")))
 
-(defsqstest receive-limit+attrs
-  (doseq [x (range 100)]
-    (send client *test-queue-url* (str x)))
-  (wait-for-full-queue *test-queue-url* 50 "limit+attrs")
-  (let [[{:keys [attributes]} :as msgs] (receive client *test-queue-url*)]
-    (is (== 1 (count msgs)))
-    (is (empty? attributes)))
-  (wait-for-condition #(let [msgs (receive client *test-queue-url* :limit 10 :attributes #{"All"})]
-                         (is (->> msgs
-                               (map (comp count :attributes))
-                               (every? pos?)))
-                         (< 1 (count msgs)))
-    "limit+attrs queue never produced > 1 message on a receive"))
-
-(defsqstest receive-visibility
-  (doseq [x (range 10)]
-    (send client *test-queue-url* (str x)))
-  (wait-for-full-queue *test-queue-url* 5 "recieve-visibility")
-  (let [v (-> (receive client *test-queue-url* :visibility 5) first :body read-string)]
-    (is (some #(= v (-> % :body read-string)) (polling-receive client *test-queue-url* :max-wait 10000)))))
-
-)
+(defsdbtest test-consistent-read
+  (let [config (assoc encoding/all-strings :client client :consistent-read? true)]
+    (doseq [id (map str (range 250))]
+      (put-attrs config *test-domain-name* {:sdb/id id :key id})
+      (when-not (is (get-attrs config *test-domain-name* id))
+        (throw (IllegalStateException. (str "Consistent read wasn't on item " id)))))))

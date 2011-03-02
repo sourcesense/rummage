@@ -7,12 +7,14 @@
 ;   You must not remove this notice, or any other, from this software.
 
 (ns cemerick.rummage
- (:import
-   cemerick.rummage.DataUtils
-   (com.amazonaws.services.simpledb AmazonSimpleDBClient)
-   (com.amazonaws.services.simpledb.model CreateDomainRequest DeleteDomainRequest
-     ListDomainsRequest
-     DomainMetadataRequest)))
+  (:require [cemerick.rummage.encoding :as encoding])
+  (:import
+    cemerick.rummage.DataUtils
+    (com.amazonaws.services.simpledb AmazonSimpleDBClient)
+    (com.amazonaws.services.simpledb.model CreateDomainRequest DeleteDomainRequest
+      ListDomainsRequest DomainMetadataRequest Attribute
+      ReplaceableItem ReplaceableAttribute PutAttributesRequest
+      GetAttributesRequest)))
 
 (defn create-client
   "Creates a client for talking to a specific AWS SimpleDB
@@ -26,18 +28,20 @@
 (defn create-domain
   "Creates a domain with the specified name.  Returns successfully if the domain
    already exists."
-  [^AmazonSimpleDBClient client name]
-  (.createDomain client (CreateDomainRequest. name)))
+  [client name]
+  (.createDomain ^AmazonSimpleDBClient (or (:client client) client)
+    (CreateDomainRequest. name)))
 
 (defn delete-domain
   "Deletes the named domain."
-  [^AmazonSimpleDBClient client name]
-  (.deleteDomain client (DeleteDomainRequest. name)))
+  [client name]
+  (.deleteDomain ^AmazonSimpleDBClient (or (:client client) client)
+    (DeleteDomainRequest. name)))
 
 (defn- list-domains*
-  [^AmazonSimpleDBClient client next-token]
+  [client next-token]
   (let [req (-> (ListDomainsRequest.) (.withNextToken next-token))
-        res (.listDomains client req)]
+        res (.listDomains ^AmazonSimpleDBClient (or (:client client) client) req)]
     (concat (.getDomainNames res)
       (when (.getNextToken res)
         (list-domains* client (.getNextToken res))))))
@@ -47,67 +51,80 @@
   [client]
   (list-domains* client nil))
 
+(def domain-metadata-keys
+  #{:timestamp :attributeValuesSizeBytes :attributeNameCount :itemCount
+    :attributeValueCount :attributeNamesSizeBytes :itemNamesSizeBytes})
+
 (defn domain-metadata 
   "Returns a map of domain metadata"
-  [^AmazonSimpleDBClient client domain]
+  [client domain]
   (select-keys
-    (-> client
+    (-> ^AmazonSimpleDBClient (or (:client client) client)
       (.domainMetadata (DomainMetadataRequest. domain))
       bean)
-    [:timestamp :attributeValuesSizeBytes  :attributeNameCount  :itemCount
-     :attributeValueCount  :attributeNamesSizeBytes :itemNamesSizeBytes]))
+    domain-metadata-keys))
 
-#_(comment (declare decode-sdb-str)
+(defn- as-collection
+  "If v is a collection, returns it, else returns a collection containing v."
+  [v]
+  (if (or (coll? v) (instance? java.util.Collection v)) v [v]))
 
-(defn from-sdb-str 
-  "Reproduces the representation of the item from a string created by to-sdb-str"
-  [s]
-  (let [si (.indexOf s ":")
-        tag (subs s 0 si)
-        str (subs s (inc si))]
-    (decode-sdb-str tag str)))
+(defn- as-set
+  "If v is a set, returns it, else returns a set containing v."
+  [v]
+  (if (set? v) v (hash-set v)))
 
-(defn- encode-sdb-str [prefix s]
-  (str prefix ":" s))
+(defn- build-attrs
+  [encode-fn item add-to?]
+  (for [[k v] item
+        v (as-collection v)
+        :let [[name value] (encode-fn [k v])]]
+    (ReplaceableAttribute. name value (not (add-to? k)))))
 
-(defmulti #^{:doc "Produces the representation of the item as a string for sdb"}
-  to-sdb-str type)
-(defmethod to-sdb-str String [s] (encode-sdb-str "s" s))
-(defmethod to-sdb-str clojure.lang.Keyword [k] (encode-sdb-str "k" (name k)))
-(defmethod to-sdb-str Integer [i] (encode-sdb-str "i" (encode-integer 10000000000 i)))
-(defmethod to-sdb-str Long [n] (encode-sdb-str "l" (encode-integer 10000000000000000000 n)))
-(defmethod to-sdb-str java.util.UUID [u] (encode-sdb-str "U" u))
-(defmethod to-sdb-str java.util.Date [d] (encode-sdb-str "D" (AmazonSimpleDBUtil/encodeDate d)))
-(defmethod to-sdb-str Boolean [z] (encode-sdb-str "z" z))
+(defn- build-items
+  [schema items add-to?]
+  (for [i items]
+    (ReplaceableItem. ((:encode-id schema) (:sdb/id i))
+      (build-attrs (:encode schema) i add-to?))))
 
-(defmulti decode-sdb-str (fn [tag s] tag))
-(defmethod decode-sdb-str "s" [_ s] s)
-(defmethod decode-sdb-str "k" [_ k] (keyword k))
-(defmethod decode-sdb-str "i" [_ i] (decode-integer 10000000000 i))
-(defmethod decode-sdb-str "l" [_ n] (decode-integer 10000000000000000000 n))
-(defmethod decode-sdb-str "U" [_ u] (java.util.UUID/fromString u))
-(defmethod decode-sdb-str "D" [_ d] (AmazonSimpleDBUtil/decodeDate d))
-(defmethod decode-sdb-str "z" [_ z] (condp = z, "true" true, "false" false))
+(defn- build-update-condition
+  [encode-fn update-condition]
+  (and update-condition
+    ))
 
-(defn- item-attrs [item]
-  (reduce (fn [kvs [k v :as kv]]
-              (cond
-               (= k :sdb/id) kvs
-               (set? v) (reduce (fn [kvs v] (conj kvs [k v])) kvs v)
-               :else (conj kvs kv)))
-          [] item))
+(defn put-attrs
+  [client-config domain item & {:keys [add-to? update-condition]
+                                :or {add-to? #{}}}]
+  (let [req (PutAttributesRequest. domain
+              ((:encode-id client-config) (:sdb/id item))
+              (build-attrs (:encode client-config) item add-to?))
+        update-condition (build-update-condition (:encode client-config) update-condition)]
+    (.putAttributes ^AmazonSimpleDBClient (or (:client client-config) client-config)
+      (.withExpected req update-condition))))
 
-(defn item-triples
-  "Given an item-map, returns a set of triples representing the attrs of an item"
-  [item]
-  (let [s (:sdb/id item)]
-    (reduce (fn [ts [k v]]
-                (conj ts {:s s :p k :o v}))
-            #{} (item-attrs item))))
+(defn- into-map
+  [decode-fn item-id attributes]
+  (when-not decode-fn
+    (throw (IllegalArgumentException. "No :decode function available in client-config")))
+  (reduce
+    (fn [m ^Attribute a]
+      (let [[k v] (decode-fn [(.getName a) (.getValue a)])]
+        (update-in m [k] #(if % (-> % as-set (conj %2)) %2) v)))
+    {:sdb/id item-id}
+    attributes))
 
-(defn- replaceable-attrs [item add-to?]
-  (map (fn [[k v]] (ReplaceableAttribute. (to-sdb-str k) (to-sdb-str v) (not (add-to? k))))
-                  (item-attrs item)))
+(defn get-attrs
+  [client-config domain item-id & attr-names]
+  (let [req (-> (GetAttributesRequest. domain ((:encode-id client-config) item-id))
+              (.withConsistentRead (-> client-config :consistent-read? boolean))
+              (.withAttributeNames (->> attr-names
+                                     (map #((:encode client-config) [% nil]))
+                                     (map first))))
+        res (.getAttributes ^AmazonSimpleDBClient (or (:client client-config) client-config) req)]
+    (when-let [attrs (-> res .getAttributes seq)]
+      (into-map (:decode client-config) item-id attrs))))
+
+#_(comment
 
 (defn put-attrs
   "Puts attrs for one item into the domain. By default, attrs replace
@@ -129,28 +146,6 @@
         (map
           #(ReplaceableItem. (to-sdb-str (:sdb/id %)) (replaceable-attrs % add-to?))
           items)))))
-
-(defn setify
-  "If v is a set, returns it, else returns a set containing v"
-  [v]
-  (if (set? v) v (hash-set v)))
-
-(defn- build-item [item-id attrs]
-  (reduce (fn [m #^Attribute a]
-            (let [k (from-sdb-str (.getName a))
-                  v (from-sdb-str (.getValue a))
-                  ov (m k)]
-              (assoc m k (if ov (conj (setify ov) v) v))))
-          {:sdb/id item-id} attrs))
-
-(defn get-attrs
-  "Gets the attributes for an item, as a valid item map. If no attrs are supplied,
-  gets all attrs for the item."
-  [client domain item-id & attrs]
-  (let [r (.getAttributes client
-                          (GetAttributesRequest. domain (to-sdb-str item-id) (map to-sdb-str attrs)))
-        attrs (.. r getGetAttributesResult getAttribute)]
-    (build-item item-id attrs)))
 
 ;todo remove a subset of a set of vals
 (defn delete-attrs
