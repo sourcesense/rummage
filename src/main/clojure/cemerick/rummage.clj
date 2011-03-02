@@ -87,9 +87,14 @@
                                         true))))
 
 (defn- update-condition
-  [encode-fn [key value :as expectation-pair] exists?]
-  (let [[k v] (encode-fn expectation-pair)]
-    (UpdateCondition. k (and value v) exists?)))
+  [encode-fn [key value :as expecting] not-expecting]
+  (when (and expecting not-expecting)
+    (throw (IllegalArgumentException. "Cannot have both :expecting and :not-expecting update conditions")))
+  (cond
+    expecting (let [[k v] (-> expecting as-collection encode-fn)]
+                (UpdateCondition. k (and value v) true))
+    not-expecting (let [[k v] (encode-fn [not-expecting])]
+                    (UpdateCondition. k nil false))))
 
 (defn put-attrs
   "Puts attrs for one item into the domain. By default, attrs replace
@@ -97,13 +102,9 @@
   function (usually a set), and when it returns true for a key, values
   will be added to the set of values at that key, if any."
   [client-config domain item & {:keys [add-to? expecting not-expecting]}]
-  (when (and expecting not-expecting)
-    (throw (IllegalArgumentException. "Cannot have both :expecting and :not-expecting update conditions")))
   (let [id ((:encode-id client-config) (:sdb/id item))
         attrs (build-attrs (:encode client-config) item add-to?)
-        update-condition (cond
-                           expecting (update-condition (:encode client-config) (as-collection expecting) true)
-                           not-expecting (update-condition (:encode client-config) [not-expecting] false))]
+        update-condition (update-condition (:encode client-config) expecting not-expecting)]
     (.putAttributes
       (client client-config)
       (.withExpected (PutAttributesRequest. domain id attrs) update-condition))))
