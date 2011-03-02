@@ -14,7 +14,7 @@
     (com.amazonaws.services.simpledb.model CreateDomainRequest DeleteDomainRequest
       ListDomainsRequest DomainMetadataRequest Attribute
       ReplaceableItem ReplaceableAttribute PutAttributesRequest
-      GetAttributesRequest)))
+      GetAttributesRequest UpdateCondition)))
 
 (defn create-client
   "Creates a client for talking to a specific AWS SimpleDB
@@ -87,20 +87,28 @@
     (ReplaceableItem. ((:encode-id schema) (:sdb/id i))
       (build-attrs (:encode schema) i add-to?))))
 
-(defn- build-update-condition
-  [encode-fn update-condition]
-  (and update-condition
-    ))
+(defn- update-condition
+  [encode-fn [key value :as expectation-pair] exists?]
+  (let [[k v] (encode-fn expectation-pair)]
+    (UpdateCondition. k (and value v) exists?)))
 
 (defn put-attrs
-  [client-config domain item & {:keys [add-to? update-condition]
+  "Puts attrs for one item into the domain. By default, attrs replace
+  all values present at the same attrs/keys. You can pass an add-to?
+  function (usually a set), and when it returns true for a key, values
+  will be added to the set of values at that key, if any."
+  [client-config domain item & {:keys [add-to? expecting not-expecting]
                                 :or {add-to? #{}}}]
-  (let [req (PutAttributesRequest. domain
-              ((:encode-id client-config) (:sdb/id item))
-              (build-attrs (:encode client-config) item add-to?))
-        update-condition (build-update-condition (:encode client-config) update-condition)]
-    (.putAttributes ^AmazonSimpleDBClient (or (:client client-config) client-config)
-      (.withExpected req update-condition))))
+  (when (and expecting not-expecting)
+    (throw (IllegalArgumentException. "Cannot have both :expecting and :not-expecting update conditions")))
+  (let [id ((:encode-id client-config) (:sdb/id item))
+        attrs (build-attrs (:encode client-config) item add-to?)
+        update-condition (cond
+                           expecting (update-condition (:encode client-config) (as-collection expecting) true)
+                           not-expecting (update-condition (:encode client-config) [not-expecting] false))]
+    (.putAttributes
+      ^AmazonSimpleDBClient (or (:client client-config) client-config)
+      (.withExpected (PutAttributesRequest. domain id attrs) update-condition))))
 
 (defn- into-map
   [decode-fn item-id attributes]
@@ -125,17 +133,6 @@
       (into-map (:decode client-config) item-id attrs))))
 
 #_(comment
-
-(defn put-attrs
-  "Puts attrs for one item into the domain. By default, attrs replace
-  all values present at the same attrs/keys. You can pass an add-to?
-  function (usually a set), and when it returns true for a key, values
-  will be added to the set of values at that key, if any."
-  ([client domain item] (put-attrs client domain item #{}))
-  ([client domain item add-to?]
-    (let [item-name (to-sdb-str (:sdb/id item))
-          attrs (replaceable-attrs item add-to?)]
-      (.putAttributes client (PutAttributesRequest. domain item-name attrs)))))
 
 (defn batch-put-attrs
   "Puts the attrs for multiple items into a domain, with the same semantics as put-attrs"

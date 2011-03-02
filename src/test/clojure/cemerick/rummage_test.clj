@@ -47,7 +47,7 @@
   (let [wait-condition (loop [waiting 0]
                          (cond
                            (f) true
-                           (>= waiting 120) false
+                           (>= waiting 60) false
                            :else (do
                                    (Thread/sleep 1000)
                                    (recur (inc waiting)))))]
@@ -109,7 +109,26 @@
             (get-attrs config *test-domain-name* (:sdb/id item) ":a" ":c")
             [":a" ":c"])))))
 
+(defsdbtest test-conditional-put
+  (let [config (assoc encoding/all-strings :client client :consistent-read? true)]
+    (put-attrs config *test-domain-name* {:sdb/id "foo" :a 5})
+    (put-attrs config *test-domain-name* {:sdb/id "foo" :b 6} :not-expecting :c)
+    
+    (is (thrown-with-msg? com.amazonaws.AmazonServiceException #".*Conditional check failed.*"
+          (put-attrs config *test-domain-name* {:sdb/id "foo" :b 7} :not-expecting :b)))
+    
+    (put-attrs config *test-domain-name* {:sdb/id "foo" :b 9} :expecting [:b "6"])
+    (is (= "9" (get (get-attrs config *test-domain-name* "foo" :b) ":b")))
+    
+    (is (thrown-with-msg? com.amazonaws.AmazonServiceException #".*Conditional check failed.*"
+          (put-attrs config *test-domain-name* {:sdb/id "foo" :b 9} :expecting [:b "12"])))))
 
+(defsdbtest test-put-replace
+  (let [config (assoc encoding/all-strings :client client :consistent-read? true)]
+    (put-attrs config *test-domain-name* {:sdb/id "foo" :a 5})
+    (put-attrs config *test-domain-name* {:sdb/id "foo" :a 6} :add-to? #{:a})
+    (is (= #{"5" "6"}
+          (get (get-attrs config *test-domain-name* "foo") ":a")))))
 
 (defsdbtest test-inconsistent-read
   (let [config (assoc encoding/all-strings :client client)
