@@ -86,20 +86,38 @@
       Integer (assoc (base Long) :class Integer)
       Float (assoc (base Double) :class Float))))
 
-(def name-typed-values
+(def prefixed-id-formatting
   {:encode-id (partial to-prefixed-string prefix-formatting)
-   :decode-id (partial from-prefixed-string prefix-formatting)
-   :encode (fn [[k v]]
-             (if-not (keyword? k)
-               [(str k) (str v)]
-               [(to-prefixed-string prefix-formatting k)
-                (if-let [ns (namespace k)]
-                 (to-prefixed-string prefix-formatting v ns)
-                 (str v))]))
-   :decode (fn [[k v]]
-             (let [kw (keyword k)]
-               [kw
-                (if-let [ns (namespace kw)]
-                  (from-prefixed-string prefix-formatting v ns)
-                  v)]))})
+   :decode-id (partial from-prefixed-string prefix-formatting)})
 
+(def name-typed-values
+  (assoc prefixed-id-formatting
+    :encode (fn [[k v]]
+              (if-not (keyword? k)
+                [(str k) (str v)]
+                [(to-prefixed-string prefix-formatting k)
+                 (if-let [ns (namespace k)]
+                   (to-prefixed-string prefix-formatting v ns)
+                   (str v))]))
+    :decode (fn [[k v]]
+              (let [kw (keyword k)]
+                [kw
+                 (if-let [ns (namespace kw)]
+                  (from-prefixed-string prefix-formatting v ns)
+                  v)]))))
+
+(defn fixed-domain-schema
+  ([name-type-map]
+    (fixed-domain-schema name-type-map prefix-formatting))
+  ([name-type-map formatters]
+    (let [name-formatter-map (into {} (for [[name type] name-type-map]
+                                        (if-let [formatter (get formatters type)]
+                                          [name formatter]
+                                          (throw (IllegalArgumentException. (str "No formatter available for type " type))))))]
+      (assoc prefixed-id-formatting
+      :encode (fn [[k v]]
+                [(to-prefixed-string formatters k)
+                 (to-prefixed-string name-formatter-map v k)])
+      :decode (fn [[k v]]
+                (let [k (from-prefixed-string formatters k)]
+                  [k (from-prefixed-string formatters v k)]))))))

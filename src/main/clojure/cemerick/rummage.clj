@@ -15,7 +15,8 @@
       ListDomainsRequest DomainMetadataRequest Attribute
       ReplaceableItem ReplaceableAttribute PutAttributesRequest
       GetAttributesRequest UpdateCondition BatchPutAttributesRequest
-      DeleteAttributesRequest DeletableItem BatchDeleteAttributesRequest)))
+      DeleteAttributesRequest DeletableItem BatchDeleteAttributesRequest
+      SelectRequest Item)))
 
 (defn create-client
   "Creates a client for talking to a specific AWS SimpleDB
@@ -110,16 +111,15 @@
       (client client-config)
       (.withExpected (PutAttributesRequest. domain id attrs) update-condition))))
 
-(defn- build-items
-  [schema items add-to?]
-  (for [i items]
-    (ReplaceableItem. ((:encode-id schema) (:sdb/id i))
-      (build-attrs (:encode schema) i add-to?))))
+(defn- encode-item
+  [{:keys [encode encode-id]} add-to? item]
+  (ReplaceableItem. (encode-id (:sdb/id item))
+    (build-attrs encode item add-to?)))
 
 (defn batch-put-attrs
   "Puts the attrs for multiple items into a domain, with the same semantics as put-attrs"
   [client-config domain items & {:keys [add-to?]}]
-  (doseq [batch (partition-all 25 (build-items client-config items add-to?))]
+  (doseq [batch (partition-all 25 (map (partial encode-item client-config add-to?) items))]
     (.batchPutAttributes
       (client client-config)
       (BatchPutAttributesRequest. domain batch))))
@@ -185,72 +185,122 @@
         (client client-config)
         (BatchDeleteAttributesRequest. domain batch)))))
 
-#_(comment
-(defn- attr-str [attr]
-  (if (sequential? attr)
-    (let [[op a] attr]
-      (assert (= op 'every))
-      (format "every(%s)" (attr-str a)))
-    (str \` (to-sdb-str attr) \`)))
+(def ^{:private true} *select-encode-fn*)
+(def ^{:private true} *select-encode-id-fn*)
 
-(defn- op-str [op]
-  (.replace (str op) "-" " "))
+(defn- escape
+  ([name] (str \` name \`))
+  ([name ^String value]
+    [(escape name)
+     (str \" (.replace value "\"" "\"\"") \")]))
 
-(defn- val-str [v]
-  (str \" (.replace (to-sdb-str v) "\"" "\"\"") \"))
+(defn- strip-expr-symbol-ns
+  [expr]
+  (-> expr first name symbol))
 
-(defn- simplify-sym [x]
-  (if (and (symbol? x) (namespace x))
-    (symbol (name x))
-    x))
-
-(defn- expr-str
-  [e]
-  (condp #(%1 %2) (simplify-sym (first e))
-    '#{not}
-      (format "(not %s)" (expr-str (second e)))
-    '#{and or intersection}
-      :>> #(format "(%s %s %s)" (expr-str (nth e 1)) % (expr-str (nth e 2)))
-    '#{= != < <= > >= like not-like}
-      :>> #(format "(%s %s %s)" (attr-str (nth e 1)) (op-str %) (val-str (nth e 2)))
-    '#{null not-null}
-      :>> #(format "(%s %s)" (op-str %) (attr-str (nth e 1)))
-    '#{between}
-      :>> #(format "(%s %s %s and %s)" (attr-str (nth e 1)) % (val-str (nth e 2)) (val-str (nth e 3)))
-    '#{in} (cl-format nil "~a in(~{~a~^, ~})"
-             (attr-str (nth e 1)) (map val-str (nth e 2)))
-    ))
+(defn- handle-every
+  ([attr]
+  (if-not (sequential? attr)
+    attr
+    (do
+      (when (not= 'every (strip-expr-symbol-ns attr))
+        (throw (IllegalArgumentException. (str "Invalid query op: " attr))))
+      (format "every(%s)" (*select-encode-fn* (second attr))))))
+  ([attr value] [(handle-every attr) value]))
 
 (defn- where-str
-  [q] (expr-str q))
+  [where-expansions expr]
+  (let [expr-op (strip-expr-symbol-ns expr)
+        expansion-fn (where-expansions expr-op)]
+    (when-not expansion-fn
+      (throw (IllegalArgumentException. "No expansion available for where expression " expr)))
+    (apply expansion-fn (-> expr-op name (.replace "-" " ")) (rest expr))))
 
-(defn select-str
+(def ^{:private true} where-expansions
+  (let [base {'not #(format "(not %s)" (where-str %2))
+              
+              '[and or intersection]
+              #(apply format "(%2$s %1$s %3$s)" % (map where-str %&))
+              
+              '[= != < <= > >= like not-like]
+              (fn [op & name-value]
+                (apply format "(%2$s %1$s %3$s)" op (apply *select-encode-fn* name-value)))
+              
+              '[null not-null]
+              #(format "(%s is %s)" (*select-encode-fn* %2) %)
+              
+              'between
+              (fn [_ name val1 val2]
+                (let [[name val1] (*select-encode-fn* name val1)
+                      [_ val2] (*select-encode-fn* name val2)]
+                  (format "(%s between %s and %s)" name val1 val2)))
+              
+              'in
+              (fn [_ name values]
+                ; the repeated encoding of `name` here given large sets of values is unfortunate
+                (let [pairs (map #(*select-encode-fn* name %) values)]
+                  (format "%s in(%s)" (ffirst pairs) (->> pairs
+                                                       (map second)
+                                                       (interpose ", ")
+                                                       (apply str)))))}]
+    (->> base
+      (mapcat (fn [[k v]]
+                (if (coll? k)
+                  (for [op k] [op v]))))
+      (into {}))))
+
+(def ^{:private true} query-language
+  {:select #(case %
+              '* "*"
+              'id "itemName()"
+              'count "count(*)"
+              (interpose ", " (map *select-encode-fn* %)))
+   :from escape
+   :where (partial where-str where-expansions)
+   :order-by (fn [[attr] & [direction]]
+               [(*select-encode-fn* attr) \space (or direction "asc")])
+   :limit identity})
+
+(defn select-string
   "Produces a string representing the query map in the SDB Select language.
-  query calls this for you, just public for diagnostic purposes."
-  [m]
-  (str "select "
-    (condp = (simplify-sym (:select m))
-      '* "*"
-      'ids "itemName()"
-      'count "count(*)"
-      (cl-format nil "~{~a~^, ~}" (map attr-str (:select m))))
-    " from " (:from m)
-    (when-let [w (:where m)]
-      (str " where " (where-str w)))
-    (when-let [s (:order-by m)]
-      (str " order by " (attr-str (first s)) " " (or (second s) 'asc)))
-    (when-let [n (:limit m)]
-      (str " limit " n))))
+  `query` calls this for you – public only for diagnostic purposes."
+  [config select-map]
+  (binding [*select-encode-fn* (comp
+                                 (partial apply escape)
+                                 (partial apply (:encode config))
+                                 handle-every)
+            *select-encode-id-fn* (comp escape (:encode-id config))]
+    (->> (for [k [:select :from :where :order-by :limit]
+               :let [expansion-fn (k query-language)
+                     expression (k select-map)]
+               :when expression]
+           (cons [\space (-> k name (.replace "-" " ")) \space]
+             (-> expression expansion-fn as-collection)))
+      (mapcat identity)
+      (apply str))))
+
+(defn- decode-item
+  [{:keys [decode-id decode]} ^Item item]
+  (assoc (->> (.getAttributes item)
+           (map (fn [^Attribute a]
+                  (decode (.getName a) (.getValue a))))
+           (into {}))
+    :sdb/id (-> item .getName decode-id)))
 
 (defn query
-  "Issue a query. q is a map with mandatory keys:
+  "Issue a query. When `q` is a string, it is submitted directly without any interpretation.
 
-  :select */ids/count/[sequence-of-attrs]
-  :from domain-name
+   When `q` is a map, it is interpreted to generate a corresponding query string,
+   using the configuration provided to drive attribute name and value formatting.
 
-  and optional keys:
+   The query map has mandatory keys:
 
-  :where sexpr-based query expr supporting
+   :select */id/count/[sequence-of-attrs]
+   :from domain-name
+
+   and optional keys:
+
+   :where sexpr-based query expr supporting
 
     (not expr)
     (and/or/intersection expr expr)
@@ -259,44 +309,59 @@
     (between attr val1 val2)
     (in attr #(val-set})
 
-  :order-by [attr] or [attr asc/desc]
-  :limit n
+   :order-by [attr] or [attr asc/desc]
+   :limit n
 
-  When :select is
+   When :select is
       count - returns a number
-      ids - returns a sequence of ids
+      id - returns a sequence of ids
       * or [sequence-of-attrs] - returns a sequence of item maps, containing all or specified attrs.
 
-  See:
+   See:
 
-      http://docs.amazonwebservices.com/AmazonSimpleDB/2007-11-07/DeveloperGuide/
+      http://docs.amazonwebservices.com/AmazonSimpleDB/latest/DeveloperGuide/index.html?UsingSelect.html
 
-  for further details of select semantics. Note query maps to the SDB Select, not Query, API
-  next-token, if supplied, must be the value obtained from the :next-token attr of the metadata
-  of a previous call to the same query, e.g. (:next-token (meta last-result))"
-  ([client q] (query client q nil))
-  ([client q next-token]
-    (let [response (.select client (SelectRequest. (select-str q) next-token))
-          response-meta (.getResponseMetadata response)
-          result (.getSelectResult response)
-          items (.getItem result)
-          m {:box-usage (read-string (.getBoxUsage response-meta))
-             :request-id (.getRequestId response-meta)
-             :next-token (.getNextToken result)}]
-      (condp = (simplify-sym (:select q))
-        'count (-> items first .getAttribute (.get 0) .getValue Integer/valueOf)
-        'ids (with-meta (map #(from-sdb-str (.getName %)) items) m)
-        (with-meta (map (fn [item]
-                          (build-item (from-sdb-str (.getName item)) (.getAttribute item)))
-                     items)
-          m)))))
+  for further details of select semantics.
+
+  If the `client-config` map contains a truthy :consistent-read? value, then the query will
+  be performed in SDB's consistent read mode.
+
+  `next-token`, if supplied, must be the value obtained from the :next-token attr of the metadata
+  of a previous call to the same query, e.g. (:next-token (meta last-result)). When provided,
+  the next batch of results is returned.  See `query-all` to get all results in a single lazy seq."
+  ([client-config q] (query client-config q nil))
+  ([client-config q next-token]
+    (let [query (if (string? q)
+                  q
+                  (->> q
+                    (map (fn [[k v]] [(-> k name keyword) v]))
+                    (into {})
+                    (select-string client-config)))
+          request (-> query
+                    (SelectRequest. (-> client-config :consistent-read? boolean))
+                    (.withNextToken next-token)) 
+          response (.select (client client-config) request)
+          items (.getItems response)
+          result (case (-> #"^\s*select\s+(count\(\*\)|itemName\(\))" (re-seq query) second)
+                   "count(*)" (-> items first .getAttributes first .getValue Long/valueOf)
+                   "itemName()" (map #((:decode-id client-config) (.getName ^Item %)) items)
+                   (map (partial decode-item client-config) items))]
+      (if-not (coll? result)
+        result
+        (let [response-meta (.getCachedResponseMetadata (client client-config) request)]
+          (with-meta result {:box-usage (.getBoxUsage response-meta) 
+                             :request-id (.getRequestId response-meta)
+                             :next-token (.getNextToken response)}))))))
+
+(defn- query-all*
+  [client q next-token]
+  (let [res (query client q next-token)]
+    (if-let [nt (-> res meta :next-token)]
+      (concat res
+        (lazy-seq (query-all* client q next-token)))
+      res)))
 
 (defn query-all
-  "Issue a query repeatedly to get all results"
+  "Returns a lazy seq of all results of the given query.  See `query` for details."
   [client q]
-  (loop [ret [] next-token nil]
-    (let [r1 (query client q next-token)
-          nt (:next-token (meta r1))]
-      (if nt
-        (recur (into ret r1) nt)
-        (with-meta (into ret r1) (meta r1)))))))
+  (query-all client q nil))
