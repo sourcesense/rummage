@@ -83,7 +83,7 @@
   [encode-fn item add-to?]
   (for [[k v] (dissoc item :sdb/id)
         v (as-collection v)
-        :let [[name value] (encode-fn [k v])]]
+        :let [[name value] (encode-fn k v)]]
     (ReplaceableAttribute. name value (if add-to?
                                         (not (add-to? k))
                                         true))))
@@ -93,10 +93,12 @@
   (when (and expecting not-expecting)
     (throw (IllegalArgumentException. "Cannot have both :expecting and :not-expecting update conditions")))
   (cond
-    expecting (let [[k v] (-> expecting as-collection encode-fn)]
-                (UpdateCondition. k (and value v) true))
-    not-expecting (let [[k v] (encode-fn [not-expecting])]
-                    (UpdateCondition. k nil false))))
+    expecting (let [c (.withExists (UpdateCondition.) true)]
+                (if value
+                  (let [[k v] (encode-fn key value)]
+                    (-> c (.withName k) (.withValue v)))
+                  (.withName c (encode-fn key))))
+    not-expecting (UpdateCondition. (encode-fn not-expecting) nil false)))
 
 (defn put-attrs
   "Puts attrs for one item into the domain. By default, attrs replace
@@ -126,11 +128,9 @@
 
 (defn- into-map
   [decode-fn item-id attributes]
-  (when-not decode-fn
-    (throw (IllegalArgumentException. "No :decode function available in client-config")))
   (reduce
     (fn [m ^Attribute a]
-      (let [[k v] (decode-fn [(.getName a) (.getValue a)])]
+      (let [[k v] (decode-fn (.getName a) (.getValue a))]
         (update-in m [k] #(if % (-> % as-set (conj %2)) %2) v)))
     {:sdb/id item-id}
     attributes))
@@ -140,11 +140,12 @@
   (let [req (-> (GetAttributesRequest. domain ((:encode-id client-config) item-id))
               (.withConsistentRead (-> client-config :consistent-read? boolean))
               (.withAttributeNames (->> attr-names
-                                     (map #((:encode client-config) [% nil]))
-                                     (map first))))
+                                     (map #((:encode client-config) %)))))
         res (.getAttributes (client client-config) req)]
     (when-let [attrs (-> res .getAttributes seq)]
-      (into-map (:decode client-config) item-id attrs))))
+      (if-let [decode-fn (:decode client-config)]
+        (into-map decode-fn item-id attrs)
+        (throw (IllegalArgumentException. "No :decode function available in client-config"))))))
 
 (defn- build-delete-attrs
   [encode-fn attrs]
@@ -153,11 +154,11 @@
                 (set? attrs) (for [key attrs] [key nil])
                 :else (throw (IllegalArgumentException.
                                ":attrs must be a set of attribute keys, a map of attribute keys and values, or absent to delete all attributes of item-id")))]
-    (for [[key value :as pair] attrs
-          :let [[name avalue] (encode-fn pair)]]
+    (for [[key value] attrs]
       (if value
-        (Attribute. name avalue)
-        (.withName (Attribute.) name)))))
+        (let [[name value] (encode-fn key value)]
+          (Attribute. name value))
+        (.withName (Attribute.) (encode-fn key))))))
 
 (defn delete-attrs
   "Deletes the attrs from the item. If no attrs are supplied, deletes

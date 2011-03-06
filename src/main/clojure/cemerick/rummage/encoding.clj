@@ -1,13 +1,20 @@
 (ns cemerick.rummage.encoding
   (:import cemerick.rummage.DataUtils)
-  (:require [cemerick.utc-dates :as dates]))
+  (:require [cemerick.utc-dates :as dates])
+  (:refer-clojure :exclude (identity)))
+
+(defn identity
+  ([name] name)
+  ([name value] [name value]))
 
 ;; thought about making this a protocol, but it's all just too concise & clear as regular fns
 
 (def all-strings
   {:encode-id str
    :decode-id identity
-   :encode (partial map str)
+   :encode (fn
+             ([name] (str name))
+             ([name value] (map str [name value])))
    :decode identity})
 
 (def keyword-strings
