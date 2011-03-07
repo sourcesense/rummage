@@ -190,95 +190,126 @@
 (def ^{:private true} *select-encode-id-fn*)
 
 (defn- escape
-  ([name] (str \` name \`))
+  ([name]
+    ; encode fns return coll from 2-arg, scalar from 1-arg; making escape cleanly comp-able
+    (if (coll? name)
+      (apply escape name)
+      (str \` (.replace (str name) "`" "``") \`)))
   ([name ^String value]
     [(escape name)
-     (str \" (.replace value "\"" "\"\"") \")]))
+     (str \' (.replace value "'" "''") \')]))
 
-(defn- strip-expr-symbol-ns
-  [expr]
-  (-> expr first name symbol))
+(defn- strip-symbol-ns
+  [s]
+  (if (and (symbol? s) (namespace s))
+    (-> s name symbol)
+    s))
+
+(defn- split-every
+  [maybe-every-expr?]
+  (if-not (sequential? maybe-every-expr?)
+    [nil maybe-every-expr?]
+    (if (not= 'every (-> maybe-every-expr? first strip-symbol-ns))
+      (throw (IllegalArgumentException. (str "Invalid query op, was expecting `every`: " maybe-every-expr?)))
+      ['every (-> maybe-every-expr? second strip-symbol-ns)])))
 
 (defn- handle-every
-  ([attr]
-  (if-not (sequential? attr)
-    attr
-    (do
-      (when (not= 'every (strip-expr-symbol-ns attr))
-        (throw (IllegalArgumentException. (str "Invalid query op: " attr))))
-      (format "every(%s)" (*select-encode-fn* (second attr))))))
-  ([attr value] [(handle-every attr) value]))
+  ([encode-fn attr]
+    (let [[every? attr] (split-every attr)
+          attr (encode-fn attr)]
+      (if every?
+        (format "every(%s)" attr)
+        attr)))
+  ([encode-fn attr value]
+    (let [[every? attr] (split-every attr)
+          [name value :as encoded] (encode-fn attr value)]
+      (if every?
+        [(format "every(%s)" name) value]
+        encoded))))
 
 (defn- where-str
   [where-expansions expr]
-  (let [expr-op (strip-expr-symbol-ns expr)
-        expansion-fn (where-expansions expr-op)]
-    (when-not expansion-fn
-      (throw (IllegalArgumentException. "No expansion available for where expression " expr)))
-    (apply expansion-fn (-> expr-op name (.replace "-" " ")) (rest expr))))
+  (binding [*select-encode-fn* (partial handle-every *select-encode-fn*)
+            where-str (partial where-str where-expansions)]
+    (let [expr-op (-> expr first strip-symbol-ns)
+          expansion-fn (where-expansions expr-op)]
+      (when-not expansion-fn
+        (throw (IllegalArgumentException. (str "No expansion available for where expression " expr))))
+      (apply expansion-fn (-> expr-op name (.replace "-" " ")) (map strip-symbol-ns (rest expr))))))
 
 (def ^{:private true} where-expansions
-  (let [base {'not #(format "(not %s)" (where-str %2))
+  (let [base {'not #(format "not (%s)" (where-str %2))
               
               '[and or intersection]
-              #(apply format "(%2$s %1$s %3$s)" % (map where-str %&))
+              #(apply format "(%2$s) %1$s (%3$s)" % (map where-str %&))
               
               '[= != < <= > >= like not-like]
-              (fn [op & name-value]
-                (apply format "(%2$s %1$s %3$s)" op (apply *select-encode-fn* name-value)))
+              (fn comparison [op & name-value]
+                (apply format "%2$s %1$s %3$s" op (apply *select-encode-fn* name-value)))
               
               '[null not-null]
-              #(format "(%s is %s)" (*select-encode-fn* %2) %)
+              #(format "%s is %s" (*select-encode-fn* %2) %)
               
               'between
               (fn [_ name val1 val2]
                 (let [[name val1] (*select-encode-fn* name val1)
                       [_ val2] (*select-encode-fn* name val2)]
-                  (format "(%s between %s and %s)" name val1 val2)))
+                  (format "%s between %s and %s" name val1 val2)))
               
               'in
               (fn [_ name values]
                 ; the repeated encoding of `name` here given large sets of values is unfortunate
                 (let [pairs (map #(*select-encode-fn* name %) values)]
-                  (format "%s in(%s)" (ffirst pairs) (->> pairs
+                  (format "%s in (%s)" (ffirst pairs) (->> pairs
                                                        (map second)
                                                        (interpose ", ")
                                                        (apply str)))))}]
     (->> base
-      (mapcat (fn [[k v]]
+      (mapcat (fn [[k v :as pair]]
                 (if (coll? k)
-                  (for [op k] [op v]))))
+                  (for [op k] [op v])
+                  [pair])))
       (into {}))))
 
 (def ^{:private true} query-language
-  {:select #(case %
+  {:select #(case (strip-symbol-ns %)
               '* "*"
               'id "itemName()"
               'count "count(*)"
-              (interpose ", " (map *select-encode-fn* %)))
-   :from escape
+              (if-not (coll? %)
+                (throw (IllegalArgumentException. (str "invalid attribute spec: " %)))
+                (->> (map strip-symbol-ns %)
+                  (map *select-encode-fn*)
+                  (interpose ", ")
+                  (apply str))))
+   :from (comp escape strip-symbol-ns)
    :where (partial where-str where-expansions)
    :order-by (fn [[attr] & [direction]]
                [(*select-encode-fn* attr) \space (or direction "asc")])
    :limit identity})
 
-(defn select-string
+(defn- select-string
   "Produces a string representing the query map in the SDB Select language.
-  `query` calls this for you – public only for diagnostic purposes."
+  `query` calls this for you."
   [config select-map]
-  (binding [*select-encode-fn* (comp
-                                 (partial apply escape)
-                                 (partial apply (:encode config))
-                                 handle-every)
-            *select-encode-id-fn* (comp escape (:encode-id config))]
-    (->> (for [k [:select :from :where :order-by :limit]
+  (binding [*select-encode-fn* (comp escape (:encode config))
+            ;; TODO how to handle queries on itemName()?
+            *select-encode-id-fn* (comp (partial apply escape) (:encode-id config))]
+    (let [select-map (->> select-map
+                       (map (fn [[k v]] [(strip-symbol-ns k) v]))
+                       (into {}))]
+      (->> (for [k [:select :from :where :order-by :limit]
                :let [expansion-fn (k query-language)
-                     expression (k select-map)]
+                     expression (or (select-map k)
+                                  (select-map (-> k name symbol)))
+                     ;_ (println expression expansion-fn (when expression (expansion-fn expression)))
+                     ]
                :when expression]
-           (cons [\space (-> k name (.replace "-" " ")) \space]
-             (-> expression expansion-fn as-collection)))
-      (mapcat identity)
-      (apply str))))
+             [(-> k name (.replace "-" " ")) " "
+              (expansion-fn expression)])
+        (interpose " ")
+        (apply concat)
+        (apply str)))))
 
 (defn- decode-item
   [{:keys [decode-id decode]} ^Item item]
