@@ -25,7 +25,7 @@
 
 (def test-domain-name-prefix "rummage-test-")
 
-(defn- test-domain-name
+(defn test-domain-name
   []
   (str test-domain-name-prefix (uuid)))
 
@@ -33,7 +33,7 @@
   [domain-name]
   (.startsWith domain-name test-domain-name-prefix))
 
-(defn- verify-domain-cleanup
+(defn verify-domain-cleanup
   [f]
   (f)
   (doseq [d (filter test-domain-name? (list-domains client))]

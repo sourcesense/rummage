@@ -69,7 +69,7 @@
       bean)
     domain-metadata-keys))
 
-(defn- as-collection
+(defn as-collection
   "If v is a collection, returns it, else returns a collection containing v."
   [v]
   (if (or (coll? v) (instance? java.util.Collection v)) v [v]))
@@ -371,13 +371,14 @@
                     (select-string client-config)))
           request (-> query
                     (SelectRequest. (-> client-config :consistent-read? boolean))
-                    (.withNextToken next-token)) 
+                    (.withNextToken next-token))
           response (.select (client client-config) request)
           items (.getItems response)
-          result (case (-> #"^\s*select\s+(count\(\*\)|itemName\(\))" (re-seq query) second)
-                   "count(*)" (-> items first .getAttributes first .getValue Long/valueOf)
-                   "itemName()" (map #((:decode-id client-config) (.getName ^Item %)) items)
-                   (map (partial decode-item client-config) items))]
+          result (and (seq items)
+                   (case (-> #"^\s*select\s+(count\(\*\)|itemName\(\))" (re-seq query) first second)
+                     "count(*)" (-> items first .getAttributes first .getValue Long/valueOf)
+                     "itemName()" (map #((:decode-id client-config) (.getName ^Item %)) items)
+                     (map (partial decode-item client-config) items)))]
       (if-not (coll? result)
         result
         (let [response-meta (.getCachedResponseMetadata (client client-config) request)]
