@@ -27,14 +27,14 @@
 
 (defn from-prefixed-string
   "Reproduces the representation of the item from a string created by to-sdb-str"
-  ([formatting s]
+  ([formatting ^String s]
     (let [[_ prefix value-str] (re-seq #"([^:]+):(.*)" s)]
       (when (not prefix)
         (throw (IllegalArgumentException.
                  (format "Cannot decode (%s...), no prefix found"
                    (.substring s 0 (min 10 (count s)))))))
       (from-prefixed-string formatting value-str prefix)))
-  ([formatting value-str prefix]
+  ([formatting ^String value-str prefix]
     (let [formatter (get formatting prefix)]
       (if formatter
         ((:decode formatter) value-str)
@@ -55,7 +55,7 @@
       (encode v)
       (throw (IllegalArgumentException. (str "No formatter available for prefix " prefix))))))
 
-(def max-abs-integer (Long. (long (/ Long/MAX_VALUE 2))))
+(def ^Long max-abs-integer (Long. (long (/ Long/MAX_VALUE 2))))
 
 (defn encode-integer
   [i]

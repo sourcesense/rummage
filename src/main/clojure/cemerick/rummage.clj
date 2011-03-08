@@ -10,6 +10,7 @@
   (:require [cemerick.rummage.encoding :as encoding])
   (:import
     cemerick.rummage.DataUtils
+    com.amazonaws.ClientConfiguration
     (com.amazonaws.services.simpledb AmazonSimpleDBClient)
     (com.amazonaws.services.simpledb.model CreateDomainRequest DeleteDomainRequest
       ListDomainsRequest DomainMetadataRequest Attribute
@@ -22,8 +23,8 @@
   "Creates a client for talking to a specific AWS SimpleDB
   account. The same client can be reused for multiple requests."
   ([id secret-key]
-    (create-client id secret-key (com.amazonaws.ClientConfiguration.)))
-  ([id secret-key client-config]
+    (create-client id secret-key (ClientConfiguration.)))
+  ([id secret-key ^ClientConfiguration client-config]
     (AmazonSimpleDBClient. (com.amazonaws.auth.BasicAWSCredentials. id secret-key)
       (.withUserAgent client-config "Rummage - SDB for Clojure"))))
 
@@ -139,8 +140,7 @@
   [client-config domain item-id & attr-names]
   (let [req (-> (GetAttributesRequest. domain ((:encode-id client-config) item-id))
               (.withConsistentRead (-> client-config :consistent-read? boolean))
-              (.withAttributeNames (->> attr-names
-                                     (map #((:encode client-config) %)))))
+              (.withAttributeNames ^java.util.Collection (map (:encode client-config) attr-names)))
         res (.getAttributes (client client-config) req)]
     (when-let [attrs (-> res .getAttributes seq)]
       (if-let [decode-fn (:decode client-config)]
@@ -376,7 +376,7 @@
           items (.getItems response)
           result (and (seq items)
                    (case (-> #"^\s*select\s+(count\(\*\)|itemName\(\))" (re-seq query) first second)
-                     "count(*)" (-> items first .getAttributes first .getValue Long/valueOf)
+                     "count(*)" (-> items ^Item first .getAttributes ^Attribute first .getValue Long/valueOf)
                      "itemName()" (map #((:decode-id client-config) (.getName ^Item %)) items)
                      (map (partial decode-item client-config) items)))]
       (if-not (coll? result)
