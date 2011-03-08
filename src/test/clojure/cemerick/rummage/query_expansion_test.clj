@@ -1,4 +1,4 @@
-(ns cemerick.rummage.select-test
+(ns cemerick.rummage.query-expansion-test
   (:use [cemerick.rummage :as sdb]
     clojure.test)
   (:require [cemerick.rummage.encoding :as enc]))
