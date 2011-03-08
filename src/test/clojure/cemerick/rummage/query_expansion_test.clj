@@ -14,7 +14,7 @@
     ; attribute lists
     "select `a` from `foo`" `{:select [a] :from "foo"}
     "select `a`, `b`, `c` from `foo`" `{:select [a b c] :from "foo"}
-    "select `a`, `b`, `c` from `:foo`" `{select [a b c] from :foo}
+    "select `multi`, `character`, `attributes` from `:foo`" `{select [multi character attributes] from :foo}
     
     ; simple comparisions
     "select * from `foo` where `a` = '5'" `{select * from foo where (= a 5)}
@@ -43,6 +43,15 @@
     "select * from `foo` where not ((`a` < '5') or (`b` > '25'))" `{select * from foo where (not (or (< a 5) (> b 25)))}
     ))
 
+(deftest ordering+limit
+  (are [query-string select-map] (= query-string (#'sdb/select-string enc/all-strings select-map))
+    "select * from `foo` limit 50" `{select * from foo limit 50}
+    "select * from `foo` limit 2500" `{select * from foo limit 6000}
+    
+    "select * from `foo` order by `a` asc" `{select * from foo order-by [a]}
+    "select * from `foo` order by `a` desc" `{select * from foo order-by [a desc]}
+    ))
+
 (deftest escaping
   (are [query-string select-map] (= query-string (#'sdb/select-string enc/all-strings select-map))
     "select ```a'\"` from `foo` where ```a'\"` = '`a''\"'" `{select ["`a'\""] from foo where (= "`a'\"" "`a'\"")}
@@ -56,4 +65,9 @@
     `{select ids from foo} #"invalid attribute spec"
     
     `{select * from foo where (> (foo a) 0)} #"was expecting `every`"
+    
+    `{select * from foo limit p} #"limit expects an integer"
+    `{select * from foo limit 0} #"limit expects an integer 1 <= n <= 2500"
+    
+    `{select * from foo order-by a} #"order-by expects vector"
     ))

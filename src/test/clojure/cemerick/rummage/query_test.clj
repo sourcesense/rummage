@@ -6,6 +6,7 @@
 
 (use-fixtures :once test/verify-domain-cleanup)
 
+; dataset pulled from http://docs.amazonwebservices.com/AmazonSimpleDB/latest/DeveloperGuide/UsingSelectSampleDataset.html
 (def dataset [{:year 1959 :pages 336 :author "Kurt Vonnegut" :title "The Sirens of Titan" :sdb/id "0385333498"
                :keyword #{:book :paperback}
                :rating #{:***** "5 stars" "Excellent"}}
@@ -14,7 +15,7 @@
               {:year 1979 :pages 304 :author "Tom Wolfe" :title "The Right Stuff" :sdb/id "1579124585"
                :keyword #{:book :hardcover :american}
                :rating #{"4 stars" :****}}
-              {:year 2007 :author "Paul Van Dyk" :title "In Between" :sdb/id "B000T9886K"
+              {:year 2006 :author "Paul Van Dyk" :title "In Between" :sdb/id "B000T9886K"
                :keyword #{:trance :CD}
                :rating #{"4 stars"}}
               {:year 2007 :author "Zack Snyder" :title "300" :sdb/id "B00005JPLW"
@@ -79,4 +80,13 @@
                                                    (!= (every :keyword) :book))}
       
       (filter (comp (partial some #{:CD :DVD}) set sdb/as-collection :keyword) dataset)
-      `{select id from ~*test-domain-name* where (or (= :keyword :DVD) (= :keyword :CD))})))
+      `{select id from ~*test-domain-name* where (or (= :keyword :DVD) (= :keyword :CD))}
+      
+      (sort-by :year dataset) `{select id from ~*test-domain-name* where (> :year 0) order-by [:year]}
+      (reverse (sort-by :year dataset)) `{select id from ~*test-domain-name* where (> :year 0) order-by [:year desc]}
+      
+      (take 1 (sort-by :year dataset)) `{select id from ~*test-domain-name* where (> :year 0) order-by [:year] limit 1}
+      (->> (sort-by :year dataset)
+        reverse
+        (take 1))
+      `{select id from ~*test-domain-name* where (> :year 0) order-by [:year "desc"] limit 1})))

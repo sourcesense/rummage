@@ -3,6 +3,14 @@
   (:require [cemerick.utc-dates :as dates])
   (:refer-clojure :exclude (identity)))
 
+(defn strip-symbol-ns
+  "If `s` is a namespaced symbol, returns a new symbol with no namespace, but the same name.
+   Otherwise, returns `s` unchanged."
+  [s]
+  (if (and (symbol? s) (namespace s))
+    (-> s name symbol)
+    s))
+
 (defn identity
   ([name] name)
   ([name value] [name value]))

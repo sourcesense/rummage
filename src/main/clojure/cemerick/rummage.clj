@@ -7,7 +7,7 @@
 ;   You must not remove this notice, or any other, from this software.
 
 (ns cemerick.rummage
-  (:require [cemerick.rummage.encoding :as encoding])
+  (:use [cemerick.rummage.encoding :as encoding :only (strip-symbol-ns)])
   (:import
     cemerick.rummage.DataUtils
     com.amazonaws.ClientConfiguration
@@ -199,12 +199,6 @@
     [(escape name)
      (str \' (.replace value "'" "''") \')]))
 
-(defn- strip-symbol-ns
-  [s]
-  (if (and (symbol? s) (namespace s))
-    (-> s name symbol)
-    s))
-
 (defn- split-every
   [maybe-every-expr?]
   (if-not (sequential? maybe-every-expr?)
@@ -284,9 +278,21 @@
                   (apply str))))
    :from (comp escape strip-symbol-ns)
    :where (partial where-str where-expansions)
-   :order-by (fn [[attr] & [direction]]
-               [(*select-encode-fn* attr) \space (or direction "asc")])
-   :limit identity})
+   :order-by (fn [& [args]]
+               (when-not (sequential? args)
+                 (throw (IllegalArgumentException. (str "order-by expects vector of attribute name and optional asc/desc sort direction, got: " args))))
+               (let [[attr direction] args]
+                 (str (*select-encode-fn* (strip-symbol-ns attr))
+                   \space
+                   (or (strip-symbol-ns direction) "asc"))))
+   :limit #(cond
+             (not (integer? %))
+             (throw (IllegalArgumentException. (str "limit expects an integer, got " count)))
+             
+             (not (<= 1 %))
+             (throw (IllegalArgumentException. (str "limit expects an integer 1 <= n <= 2500, got " %)))
+             
+             :else (min 2500 %))})
 
 (defn- select-string
   "Produces a string representing the query map in the SDB Select language.
@@ -301,9 +307,7 @@
       (->> (for [k [:select :from :where :order-by :limit]
                :let [expansion-fn (k query-language)
                      expression (or (select-map k)
-                                  (select-map (-> k name symbol)))
-                     ;_ (println expression expansion-fn (when expression (expansion-fn expression)))
-                     ]
+                                  (select-map (-> k name symbol)))]
                :when expression]
              [(-> k name (.replace "-" " ")) " "
               (expansion-fn expression)])
