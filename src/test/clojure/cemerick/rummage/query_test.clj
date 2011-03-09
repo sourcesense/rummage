@@ -84,7 +84,7 @@
       
       ; live itemName() query
       (filter #(pos? (compare (::sdb/id %) "1579124585")) dataset)
-      `{select id from ~*test-domain-name* where (> (::sdb/id) "1579124585")}
+      `{select id from ~*test-domain-name* where (> ::sdb/id "1579124585")}
       )))
 
 (defsdbtest ordered-queries
@@ -114,7 +114,7 @@
       (->> (sort-by ::sdb/id dataset)
         (filter #(pos? (compare (::sdb/id %) "2")))
         reverse)
-      `{select id from ~*test-domain-name* where (> (::sdb/id) "2") order-by [(::sdb/id) desc]})))
+      `{select id from ~*test-domain-name* where (> ::sdb/id "2") order-by [::sdb/id desc]})))
 
 (defsdbtest test-query-all
   (let [config (assoc (enc/fixed-domain-schema {:key Integer}) :client client :consistent-read? true)

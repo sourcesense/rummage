@@ -209,14 +209,17 @@
 (defn- attribute-clause
   [encode-fn encode-id-fn & [attr value :as args]]
   (let [value? (= 2 (count args))]
-    (case (-> attr as-collection first strip-symbol-ns)
-      ::id (if value?
-                ["itemName()" (encode-id-fn value)]
-                "itemName()")
-      every (let [[name value] (apply encode-fn (cons (-> attr second strip-symbol-ns) (rest args)))
-                  name (format "every(%s)" name)]
-              (if value? [name value] value))
-      (apply encode-fn args))))
+    (cond
+      (= ::id attr) (if value?
+                      ["itemName()" (encode-id-fn value)]
+                      "itemName()")
+      
+      (= 'every (-> attr as-collection first strip-symbol-ns))
+      (let [[name value] (apply encode-fn (cons (-> attr second strip-symbol-ns) (rest args)))
+            name (format "every(%s)" name)]
+        (if value? [name value] value))
+      
+      :else (apply encode-fn args))))
 
 (defn- where-str
   [where-expansions expr]
@@ -402,6 +405,3 @@
     ; can't imagine when one wouldn't want to minimize round-trips when obtaining all results
     (if (map? q) (assoc q :limit 2500) q)
     nil))
-
-
-; * document all the stuff in encoding
