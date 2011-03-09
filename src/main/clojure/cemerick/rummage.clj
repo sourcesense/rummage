@@ -246,9 +246,9 @@
               
               'between
               (fn [_ name val1 val2]
-                (let [[name val1] (*select-encode-fn* name val1)
+                (let [[attr val1] (*select-encode-fn* name val1)
                       [_ val2] (*select-encode-fn* name val2)]
-                  (format "%s between %s and %s" name val1 val2)))
+                  (format "%s between %s and %s" attr val1 val2)))
               
               'in
               (fn [_ name values]

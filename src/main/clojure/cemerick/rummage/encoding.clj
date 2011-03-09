@@ -37,7 +37,7 @@
 (defn from-prefixed-string
   "Reproduces the representation of the item from a string created by to-sdb-str"
   ([formatting ^String s]
-    (let [[_ prefix value-str] (re-seq #"([^:]+):(.*)" s)]
+    (let [[[_ prefix value-str]] (re-seq #"([^:]+):(.*)" s)]
       (when (not prefix)
         (throw (IllegalArgumentException.
                  (format "Cannot decode (%s...), no prefix found"
@@ -74,7 +74,7 @@
 
 (defn decode-integer
   [istr]
-  (DataUtils/decodeRealNumberRangeDouble istr 0 max-abs-integer))
+  (DataUtils/decodeRealNumberRangeLong istr max-abs-integer))
 
 (defn encode-float
   [f]
@@ -90,7 +90,8 @@
               [Long "i" encode-integer decode-integer]
               [Double "f" encode-float decode-float]
               [Boolean "z" str #(condp = %, "true" true, "false" false)]
-              [java.util.Date "D" dates/format dates/parse]]
+              [java.util.Date "D" dates/format dates/parse]
+              [java.net.URL "U" str #(java.net.URL. %)]]
         base (->> base
       (map (partial zipmap [:class :prefix :encode :decode]))
       (reduce
@@ -108,19 +109,18 @@
 
 (def name-typed-values
   (assoc prefixed-id-formatting
-    :encode (fn [[k v]]
-              (if-not (keyword? k)
-                [(str k) (str v)]
-                [(to-prefixed-string prefix-formatting k)
-                 (if-let [ns (namespace k)]
-                   (to-prefixed-string prefix-formatting v ns)
-                   (str v))]))
-    :decode (fn [[k v]]
-              (let [kw (keyword k)]
-                [kw
-                 (if-let [ns (namespace kw)]
-                  (from-prefixed-string prefix-formatting v ns)
-                  v)]))))
+    :encode (fn encode
+             ([k] (to-prefixed-string prefix-formatting k))
+             ([k v]
+               (let [ns (namespace k)]
+                 [(encode k)
+                  (to-prefixed-string prefix-formatting v ns)])))
+   :decode (fn decode
+             ([k] (from-prefixed-string prefix-formatting k))
+             ([k v]
+               (let [k (decode k)
+                     ns (namespace k)]
+                 [k (from-prefixed-string prefix-formatting v ns)])))))
 
 (defn fixed-domain-schema
   ([name-type-map]
@@ -131,9 +131,13 @@
                                           [name formatter]
                                           (throw (IllegalArgumentException. (str "No formatter available for type " type))))))]
       (assoc prefixed-id-formatting
-      :encode (fn [[k v]]
-                [(to-prefixed-string formatters k)
-                 (to-prefixed-string name-formatter-map v k)])
-      :decode (fn [[k v]]
-                (let [k (from-prefixed-string formatters k)]
-                  [k (from-prefixed-string formatters v k)]))))))
+        :encode (fn encode
+                  ([k] (to-prefixed-string formatters k))
+                  ([k v]
+                    [(encode k)
+                     (to-prefixed-string name-formatter-map v k)]))
+        :decode (fn decode
+                  ([k] (from-prefixed-string formatters k))
+                  ([k v]
+                    (let [k (decode k)]
+                      [k (from-prefixed-string name-formatter-map v k)])))))))
