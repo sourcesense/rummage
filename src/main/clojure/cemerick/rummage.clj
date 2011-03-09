@@ -406,3 +406,7 @@
     ; can't imagine when one wouldn't want to minimize round-trips when obtaining all results
     (if (map? q) (assoc q :limit 2500) q)
     nil))
+
+
+; * document all the stuff in encoding
+; * figure out how to support itemName() queries

@@ -64,7 +64,9 @@
       (encode v)
       (throw (IllegalArgumentException. (str "No formatter available for prefix " prefix))))))
 
-(def ^Long max-abs-integer (Long. (long (/ Long/MAX_VALUE 2))))
+(def ^{:tag 'java.lang.Long
+       :doc "The largest absolute value integer that can be encoded (/ Long/MAX_VALUE 2)."}
+  max-abs-integer (Long. (long (/ Long/MAX_VALUE 2))))
 
 (defn encode-integer
   [i]
