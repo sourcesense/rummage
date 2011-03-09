@@ -14,11 +14,25 @@
   (doseq [n [0.1 -0.1 Double/MIN_VALUE (- Double/MIN_VALUE) Double/MAX_VALUE]]
     (is (= n (-> n enc/encode-float enc/decode-float)))))
 
-(deftest test-all-strings
-  (let [{:keys [encode decode encode-id decode-id]} enc/all-strings]
-    (is (= "a" (encode-id "a")))
-    (is (= "a" (decode-id "a")))
-    (is (= "a" (encode "a")))
-    (is (= "a" (decode "a")))
-    (is (= ["a" "b"] (encode "a" "b")))
-    (is (= ["a" "b"] (decode "a" "b")))))
+(defn- roundtrip-id
+  [encoding & values]
+  (let [{:keys [encode-id decode-id]} enc/all-strings]
+    (doseq [v values]
+      (is (= v (-> v encode-id decode-id))))))
+
+(defn- roundtrip
+  [encoding & values]
+  (let [{:keys [encode decode]} encoding]
+    (doseq [[k v :as pair] values]
+      (is (= k (-> k encode decode)))
+      (is (= pair (->> pair
+                    (apply encode)
+                    (apply decode)))))))
+
+(deftest all-strings
+  (roundtrip-id enc/all-strings "a")
+  (roundtrip enc/all-strings ["a" "b"]))
+
+(deftest keyword-strings
+  (roundtrip-id enc/keyword-strings "a")
+  (roundtrip enc/keyword-strings [:a "b"] [:ns/a "b"]))

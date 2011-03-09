@@ -27,11 +27,12 @@
 
 (def keyword-strings
   (assoc all-strings
-    :encode (fn [[k v]]
-              [(subs (str k) 1)
-               (str v)])
-    :decode (fn [[k v]]
-              [(keyword k) v])))
+    :encode (fn encode
+              ([k] (subs (str k) 1))
+              ([k v] [(encode k) (str v)]))
+    :decode (fn
+              ([k] (keyword k))
+              ([k v] [(keyword k) v]))))
 
 (defn from-prefixed-string
   "Reproduces the representation of the item from a string created by to-sdb-str"
