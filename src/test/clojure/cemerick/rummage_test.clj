@@ -156,7 +156,7 @@
 (defsdbtest test-batch-put
   (let [config (assoc enc/all-strings :client client :consistent-read? true)]
     (batch-put-attrs config *test-domain-name* (for [x (range 250)]
-                                               {:sdb/id x :key x}))
+                                                 {:sdb/id x :key x}))
     (doseq [id (map str (range 250))]
       (is (get-attrs config *test-domain-name* id)))))
 

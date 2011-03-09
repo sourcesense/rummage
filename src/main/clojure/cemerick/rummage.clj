@@ -393,7 +393,7 @@
 (defn- query-all*
   [client q next-token]
   (let [res (query client q next-token)]
-    (if-let [nt (-> res meta :next-token)]
+    (if-let [next-token (-> res meta :next-token)]
       (concat res
         (lazy-seq (query-all* client q next-token)))
       res)))
@@ -401,4 +401,8 @@
 (defn query-all
   "Returns a lazy seq of all results of the given query.  See `query` for details."
   [client q]
-  (query-all client q nil))
+  (query-all* client
+    ; maximize "chunk" size
+    ; can't imagine when one wouldn't want to minimize round-trips when obtaining all results
+    (if (map? q) (assoc q :limit 2500) q)
+    nil))

@@ -90,3 +90,13 @@
         reverse
         (take 1))
       `{select id from ~*test-domain-name* where (> :year 0) order-by [:year "desc"] limit 1})))
+
+(defsdbtest test-query-all
+  (let [config (assoc (enc/fixed-domain-schema {:key Integer}) :client client :consistent-read? true)
+        dataset (for [x (range 5000)] {:sdb/id x :key x})]
+    (batch-put-attrs config *test-domain-name* dataset)
+    
+    (is (= (->> dataset (map :key) (apply +))
+          (->> (query-all config `{select [:key] from ~*test-domain-name*})
+            (map :key)
+            (apply +))))))
