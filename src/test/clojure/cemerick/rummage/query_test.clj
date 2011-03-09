@@ -29,12 +29,12 @@
     (batch-put-attrs config *test-domain-name* dataset)
     (is (= 6 (query config `{select count from ~*test-domain-name*})
           ; verify that string queries are just passed through
-          (query config (str "select count(*) from " (#'sdb/escape *test-domain-name*)))))
+          (query config (str "select count(*) from " (#'sdb/escape-encode *test-domain-name*)))))
     
     (is (= (->> dataset (map :sdb/id) set)
           (set (query config `{select id from ~*test-domain-name*}))
           ; verify that string queries are just passed through
-          (set (query config (str "select itemName() from " (#'sdb/escape *test-domain-name*))))))
+          (set (query config (str "select itemName() from " (#'sdb/escape-encode *test-domain-name*))))))
     
     (is (empty? (query config `{select id from ~*test-domain-name* where (= :unknown-key 42)})))))
 
@@ -49,7 +49,7 @@
         (map #(into {} (for [[k v] %] [(if (= :sdb/id k) k (str k)) (str v)]))))
       `{select [:year :title :author] from ~*test-domain-name* where (not-null :keyword)})))
 
-(defsdbtest test-queries
+(defsdbtest queries
   (let [config (assoc enc/all-strings :client client :consistent-read? true)]
     (batch-put-attrs config *test-domain-name* dataset)
     
@@ -82,14 +82,39 @@
       (filter (comp (partial some #{:CD :DVD}) set sdb/as-collection :keyword) dataset)
       `{select id from ~*test-domain-name* where (or (= :keyword :DVD) (= :keyword :CD))}
       
-      (sort-by :year dataset) `{select id from ~*test-domain-name* where (> :year 0) order-by [:year]}
-      (reverse (sort-by :year dataset)) `{select id from ~*test-domain-name* where (> :year 0) order-by [:year desc]}
+      ; live itemName() query
+      (filter #(pos? (compare (:sdb/id %) "1579124585")) dataset)
+      `{select id from ~*test-domain-name* where (> (:sdb/id) "1579124585")}
+      )))
+
+(defsdbtest ordered-queries
+  (let [config (assoc enc/all-strings :client client :consistent-read? true)]
+    (batch-put-attrs config *test-domain-name* dataset)
+    
+    (are [expected select] (= (map :sdb/id expected)
+                             (query config select))
       
-      (take 1 (sort-by :year dataset)) `{select id from ~*test-domain-name* where (> :year 0) order-by [:year] limit 1}
+      (sort-by :year dataset)
+      `{select id from ~*test-domain-name* where (> :year 0) order-by [:year]}
+      
+      (reverse (sort-by :year dataset))
+      `{select id from ~*test-domain-name* where (> :year 0) order-by [:year desc]}
+      
+      ; order + limit
+      (take 1 (sort-by :year dataset))
+      `{select id from ~*test-domain-name* where (> :year 0) order-by [:year] limit 1}
+      
+      ; order + limit + desc
       (->> (sort-by :year dataset)
         reverse
         (take 1))
-      `{select id from ~*test-domain-name* where (> :year 0) order-by [:year "desc"] limit 1})))
+      `{select id from ~*test-domain-name* where (> :year 0) order-by [:year "desc"] limit 1}
+      
+      ; itemName()
+      (->> (sort-by :sdb/id dataset)
+        (filter #(pos? (compare (:sdb/id %) "2")))
+        reverse)
+      `{select id from ~*test-domain-name* where (> (:sdb/id) "2") order-by [(:sdb/id) desc]})))
 
 (defsdbtest test-query-all
   (let [config (assoc (enc/fixed-domain-schema {:key Integer}) :client client :consistent-read? true)

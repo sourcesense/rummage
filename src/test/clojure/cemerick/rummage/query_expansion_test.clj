@@ -41,6 +41,10 @@
     
     ; not
     "select * from `foo` where not ((`a` < '5') or (`b` > '25'))" `{select * from foo where (not (or (< a 5) (> b 25)))}
+    
+    ; itemName() comparison
+    "select * from `foo` where itemName() = '5'" `{select * from foo where (= (:sdb/id) 5)}
+    "select * from `foo` where itemName() in ('0', '1', '2', '3', '4')" `{select * from foo where (in (:sdb/id) ~(range 5))}
     ))
 
 (deftest ordering+limit
@@ -64,7 +68,7 @@
     `{select "a" from foo} #"invalid attribute spec"
     `{select ids from foo} #"invalid attribute spec"
     
-    `{select * from foo where (> (foo a) 0)} #"was expecting `every`"
+    ;`{select * from foo where (> (foo a) 0)} #"was expecting `every`"
     
     `{select * from foo limit p} #"limit expects an integer"
     `{select * from foo limit 0} #"limit expects an integer 1 <= n <= 2500"

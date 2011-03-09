@@ -190,14 +190,21 @@
 (def ^{:private true} *select-encode-id-fn*)
 
 (defn- escape
-  ([name]
-    ; encode fns return coll from 2-arg, scalar from 1-arg; making escape cleanly comp-able
-    (if (coll? name)
-      (apply escape name)
-      (str \` (.replace (str name) "`" "``") \`)))
-  ([name ^String value]
-    [(escape name)
-     (str \' (.replace value "'" "''") \')]))
+  [^String name-quote ^String value-quote]
+  (let [name-doubled (str name-quote name-quote)
+        value-doubled (str value-quote value-quote)]
+    (fn esc
+      ([name]
+        ; encode fns return coll from 2-arg, scalar from 1-arg; making escape cleanly comp-able
+        (if (coll? name)
+          (apply esc name)
+          (str name-quote (.replace (str name) name-quote name-doubled) name-quote)))
+      ([name ^String value]
+        [(esc name)
+         (str value-quote (.replace value value-quote value-doubled) value-quote)]))))
+
+(def ^{:private true} escape-encode (escape "`" "'"))
+(def ^{:private true} escape-id-encode (escape "'" "'"))
 
 (defn- split-every
   [maybe-every-expr?]
@@ -221,10 +228,21 @@
         [(format "every(%s)" name) value]
         encoded))))
 
+(defn- attribute-clause
+  [encode-fn encode-id-fn & [attr value :as args]]
+  (let [value? (= 2 (count args))]
+    (case (-> attr as-collection first strip-symbol-ns)
+      :sdb/id (if value?
+                ["itemName()" (encode-id-fn value)]
+                "itemName()")
+      every (let [[name value] (apply encode-fn (cons (-> attr second strip-symbol-ns) (rest args)))
+                  name (format "every(%s)" name)]
+              (if value? [name value] value))
+      (apply encode-fn args))))
+
 (defn- where-str
   [where-expansions expr]
-  (binding [*select-encode-fn* (partial handle-every *select-encode-fn*)
-            where-str (partial where-str where-expansions)]
+  (binding [where-str (partial where-str where-expansions)]
     (let [expr-op (-> expr first strip-symbol-ns)
           expansion-fn (where-expansions expr-op)]
       (when-not expansion-fn
@@ -276,7 +294,7 @@
                   (map *select-encode-fn*)
                   (interpose ", ")
                   (apply str))))
-   :from (comp escape strip-symbol-ns)
+   :from (comp escape-encode strip-symbol-ns)
    :where (partial where-str where-expansions)
    :order-by (fn [& [args]]
                (when-not (sequential? args)
@@ -298,9 +316,9 @@
   "Produces a string representing the query map in the SDB Select language.
   `query` calls this for you."
   [config select-map]
-  (binding [*select-encode-fn* (comp escape (:encode config))
-            ;; TODO how to handle queries on itemName()?
-            *select-encode-id-fn* (comp (partial apply escape) (:encode-id config))]
+  (binding [*select-encode-fn* (partial attribute-clause
+                                 (comp escape-encode (:encode config))
+                                 (comp escape-id-encode (:encode-id config)))]
     (let [select-map (->> select-map
                        (map (fn [[k v]] [(strip-symbol-ns k) v]))
                        (into {}))]
@@ -409,4 +427,3 @@
 
 
 ; * document all the stuff in encoding
-; * figure out how to support itemName() queries
