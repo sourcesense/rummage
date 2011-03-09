@@ -112,20 +112,35 @@
   {:encode-id (partial to-prefixed-string prefix-formatting)
    :decode-id (partial from-prefixed-string prefix-formatting)})
 
-(def name-typed-values
-  (assoc prefixed-id-formatting
-    :encode (fn encode
-             ([k] (to-prefixed-string prefix-formatting k))
-             ([k v]
-               (let [ns (namespace k)]
-                 [(encode k)
-                  (to-prefixed-string prefix-formatting v ns)])))
-   :decode (fn decode
-             ([k] (from-prefixed-string prefix-formatting k))
-             ([k v]
-               (let [k (decode k)
-                     ns (namespace k)]
-                 [k (from-prefixed-string prefix-formatting v ns)])))))
+(defn all-prefixed-config
+  ([] (all-prefixed-config prefix-formatting))
+  ([prefix-formatting]
+    (assoc prefixed-id-formatting
+      :encode (fn
+                ([k] (to-prefixed-string prefix-formatting k))
+                ([k v]
+                  (map #(to-prefixed-string prefix-formatting %) [k v])))
+      :decode (fn
+                ([k] (from-prefixed-string prefix-formatting k))
+                ([k v]
+                  (map #(from-prefixed-string prefix-formatting %) [k v]))))))
+
+(defn name-typed-values-config
+  ([] (name-typed-values-config prefix-formatting))
+  ([prefix-formatting]
+    (assoc prefixed-id-formatting
+      :encode (fn encode
+                ([k] (to-prefixed-string prefix-formatting k))
+                ([k v]
+                  (let [ns (namespace k)]
+                    [(encode k)
+                     (to-prefixed-string prefix-formatting v ns)])))
+      :decode (fn decode
+                ([k] (from-prefixed-string prefix-formatting k))
+                ([k v]
+                  (let [k (decode k)
+                        ns (namespace k)]
+                    [k (from-prefixed-string prefix-formatting v ns)]))))))
 
 (defn fixed-domain-schema
   ([name-type-map]

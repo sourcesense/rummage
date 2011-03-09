@@ -41,13 +41,25 @@
   (is (thrown-with-msg? Exception #"Unsupported key type"
         ((:encode enc/keyword-strings) "string-name"))))
 
-(deftest name-typed-values
-  (roundtrip-id enc/name-typed-values
+(deftest all-prefixed
+  (roundtrip-id (enc/all-prefixed-config)
     "a" :a :ns/a 42 (Integer. 42) 42.0 -5000.16 (Float. 42.42)
     true false
     (Date.) (URL. "http://clojure.org"))
   
-  (roundtrip enc/name-typed-values
+  (roundtrip (enc/all-prefixed-config)
+    ["name" "a"] [42 42]
+    [false true] [99.2 108.6]
+    [(URL. "http://clojure.org") (URL. "http://clojure.org")]
+    [(Date.) (Date.)]))
+
+(deftest name-typed-values
+  (roundtrip-id (enc/name-typed-values-config)
+    "a" :a :ns/a 42 (Integer. 42) 42.0 -5000.16 (Float. 42.42)
+    true false
+    (Date.) (URL. "http://clojure.org"))
+  
+  (roundtrip (enc/name-typed-values-config)
     [:s/string "a"] [:i/integer 42]
     [:z/boolean true] [:f/floating-point 108.6]
     [:U/url (URL. "http://clojure.org")]

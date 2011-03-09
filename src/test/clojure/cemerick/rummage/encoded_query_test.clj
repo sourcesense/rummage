@@ -24,8 +24,8 @@
           (set (query config `{select [:author :title] from ~*test-domain-name* where (> :year 1960)}))))))
 
 (defsdbtest name-typed-values
-  (let [config (assoc enc/name-typed-values :client client :consistent-read? true)
         dataset [{:sdb/id (Long. (long 1)) :s/name "Andy" :z/banned false :i/age (Long. (long 44)) :D/joined (java.util.Date.)
+  (let [config (assoc (enc/name-typed-values-config) :client client :consistent-read? true)
                   :f/weight 185.2 :U/link (java.net.URL. "http://aws.amazon.com")}
                  {:sdb/id :ns/foo :s/name "Graham" :z/banned true :i/age (Long. (long 17)) :D/joined (java.util.Date. (long 0))
                   :f/weight 166.0 :U/link (java.net.URL. "http://github.com")}]]
