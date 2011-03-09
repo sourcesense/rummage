@@ -82,7 +82,7 @@
 
 (defn- build-attrs
   [encode-fn item add-to?]
-  (for [[k v] (dissoc item :sdb/id)
+  (for [[k v] (dissoc item ::id)
         v (as-collection v)
         :let [[name value] (encode-fn k v)]]
     (ReplaceableAttribute. name value (if add-to?
@@ -107,7 +107,7 @@
   function (usually a set), and when it returns true for a key, values
   will be added to the set of values at that key, if any."
   [client-config domain item & {:keys [add-to? expecting not-expecting]}]
-  (let [id ((:encode-id client-config) (:sdb/id item))
+  (let [id ((:encode-id client-config) (::id item))
         attrs (build-attrs (:encode client-config) item add-to?)
         update-condition (update-condition (:encode client-config) expecting not-expecting)]
     (.putAttributes
@@ -116,7 +116,7 @@
 
 (defn- encode-item
   [{:keys [encode encode-id]} add-to? item]
-  (ReplaceableItem. (encode-id (:sdb/id item))
+  (ReplaceableItem. (encode-id (::id item))
     (build-attrs encode item add-to?)))
 
 (defn batch-put-attrs
@@ -133,7 +133,7 @@
     (fn [m ^Attribute a]
       (let [[k v] (decode-fn (.getName a) (.getValue a))]
         (update-in m [k] #(if % (-> % as-set (conj %2)) %2) v)))
-    {:sdb/id item-id}
+    {::id item-id}
     attributes))
 
 (defn get-attrs
@@ -206,33 +206,11 @@
 (def ^{:private true} escape-encode (escape "`" "'"))
 (def ^{:private true} escape-id-encode (escape "'" "'"))
 
-(defn- split-every
-  [maybe-every-expr?]
-  (if-not (sequential? maybe-every-expr?)
-    [nil maybe-every-expr?]
-    (if (not= 'every (-> maybe-every-expr? first strip-symbol-ns))
-      (throw (IllegalArgumentException. (str "Invalid query op, was expecting `every`: " maybe-every-expr?)))
-      ['every (-> maybe-every-expr? second strip-symbol-ns)])))
-
-(defn- handle-every
-  ([encode-fn attr]
-    (let [[every? attr] (split-every attr)
-          attr (encode-fn attr)]
-      (if every?
-        (format "every(%s)" attr)
-        attr)))
-  ([encode-fn attr value]
-    (let [[every? attr] (split-every attr)
-          [name value :as encoded] (encode-fn attr value)]
-      (if every?
-        [(format "every(%s)" name) value]
-        encoded))))
-
 (defn- attribute-clause
   [encode-fn encode-id-fn & [attr value :as args]]
   (let [value? (= 2 (count args))]
     (case (-> attr as-collection first strip-symbol-ns)
-      :sdb/id (if value?
+      ::id (if value?
                 ["itemName()" (encode-id-fn value)]
                 "itemName()")
       every (let [[name value] (apply encode-fn (cons (-> attr second strip-symbol-ns) (rest args)))
@@ -339,7 +317,7 @@
            (map (fn [^Attribute a]
                   (decode (.getName a) (.getValue a))))
            (into {}))
-    :sdb/id (-> item .getName decode-id)))
+    ::id (-> item .getName decode-id)))
 
 (defn query
   "Issue a query. When `q` is a string, it is submitted directly without any interpretation.

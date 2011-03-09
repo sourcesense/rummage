@@ -90,14 +90,14 @@
 
 (defsdbtest test-put+get
   (let [config (assoc enc/all-strings :client client :consistent-read? true)
-        item {:sdb/id "foo"
+        item {::sdb/id "foo"
               :a 5
               :b #{"bar" "baz"}
               :c 'j
               623.7 [false :kw]}]
     (put-attrs config *test-domain-name* item)
     
-    (is (= {:sdb/id "foo"
+    (is (= {::sdb/id "foo"
             ":a" "5"
             ":b" #{"bar" "baz"}
             ":c" "j"
@@ -107,27 +107,27 @@
     ; selective attribute retrieval
     (is (= {":a" "5" ":c" "j"}
           (select-keys
-            (get-attrs config *test-domain-name* (:sdb/id item) ":a" ":c")
+            (get-attrs config *test-domain-name* (::sdb/id item) ":a" ":c")
             [":a" ":c"])))))
 
 (defsdbtest test-conditional-put
   (let [config (assoc enc/all-strings :client client :consistent-read? true)]
-    (put-attrs config *test-domain-name* {:sdb/id "foo" :a 5})
-    (put-attrs config *test-domain-name* {:sdb/id "foo" :b 6} :not-expecting :c)
+    (put-attrs config *test-domain-name* {::sdb/id "foo" :a 5})
+    (put-attrs config *test-domain-name* {::sdb/id "foo" :b 6} :not-expecting :c)
     
     (is (thrown-with-msg? com.amazonaws.AmazonServiceException #".*Conditional check failed.*"
-          (put-attrs config *test-domain-name* {:sdb/id "foo" :b 7} :not-expecting :b)))
+          (put-attrs config *test-domain-name* {::sdb/id "foo" :b 7} :not-expecting :b)))
     
-    (put-attrs config *test-domain-name* {:sdb/id "foo" :b 9} :expecting [:b "6"])
+    (put-attrs config *test-domain-name* {::sdb/id "foo" :b 9} :expecting [:b "6"])
     (is (= "9" (get (get-attrs config *test-domain-name* "foo" :b) ":b")))
     
     (is (thrown-with-msg? com.amazonaws.AmazonServiceException #".*Conditional check failed.*"
-          (put-attrs config *test-domain-name* {:sdb/id "foo" :b 9} :expecting [:b "12"])))))
+          (put-attrs config *test-domain-name* {::sdb/id "foo" :b 9} :expecting [:b "12"])))))
 
 (defsdbtest test-put-replace
   (let [config (assoc enc/all-strings :client client :consistent-read? true)]
-    (put-attrs config *test-domain-name* {:sdb/id "foo" :a 5})
-    (put-attrs config *test-domain-name* {:sdb/id "foo" :a 6} :add-to? #{:a})
+    (put-attrs config *test-domain-name* {::sdb/id "foo" :a 5})
+    (put-attrs config *test-domain-name* {::sdb/id "foo" :a 6} :add-to? #{:a})
     (is (= #{"5" "6"}
           (get (get-attrs config *test-domain-name* "foo") ":a")))))
 
@@ -140,7 +140,7 @@
                              (map str)
                              (take 100))]
           (when id
-            (put-attrs config domain-name {:sdb/id id :key id})
+            (put-attrs config domain-name {::sdb/id id :key id})
             (if (get-attrs config domain-name id)
               (recur keys)
               true))))
@@ -149,20 +149,20 @@
 (defsdbtest test-consistent-read
   (let [config (assoc enc/all-strings :client client :consistent-read? true)]
     (doseq [id (map str (range 250))]
-      (put-attrs config *test-domain-name* {:sdb/id id :key id})
+      (put-attrs config *test-domain-name* {::sdb/id id :key id})
       (when-not (is (get-attrs config *test-domain-name* id))
         (throw (IllegalStateException. (str "Consistent read wasn't on item " id)))))))
 
 (defsdbtest test-batch-put
   (let [config (assoc enc/all-strings :client client :consistent-read? true)]
     (batch-put-attrs config *test-domain-name* (for [x (range 250)]
-                                                 {:sdb/id x :key x}))
+                                                 {::sdb/id x :key x}))
     (doseq [id (map str (range 250))]
       (is (get-attrs config *test-domain-name* id)))))
 
 (defsdbtest test-delete
   (let [config (assoc enc/all-strings :client client :consistent-read? true)]
-    (put-attrs config *test-domain-name* {:sdb/id "foo" :a 5 :b [5 6 7] :c 7})
+    (put-attrs config *test-domain-name* {::sdb/id "foo" :a 5 :b [5 6 7] :c 7})
     
     (is (thrown-with-msg? com.amazonaws.AmazonServiceException #".*Conditional check failed.*"
           (delete-attrs config *test-domain-name* "foo" :attrs {:c 7} :not-expecting :a)))
@@ -185,7 +185,7 @@
 (defsdbtest test-batch-delete
   (let [config (assoc enc/all-strings :client client :consistent-read? true)]
     (batch-put-attrs config *test-domain-name* (for [x (range 235)]
-                                                 {:sdb/id x :key x :otherkey (inc x)}))
+                                                 {::sdb/id x :key x :otherkey (inc x)}))
     (is (get-attrs config *test-domain-name* "34"))
     
     (batch-delete-attrs config *test-domain-name*

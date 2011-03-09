@@ -43,8 +43,8 @@
     "select * from `foo` where not ((`a` < '5') or (`b` > '25'))" `{select * from foo where (not (or (< a 5) (> b 25)))}
     
     ; itemName() comparison
-    "select * from `foo` where itemName() = '5'" `{select * from foo where (= (:sdb/id) 5)}
-    "select * from `foo` where itemName() in ('0', '1', '2', '3', '4')" `{select * from foo where (in (:sdb/id) ~(range 5))}
+    "select * from `foo` where itemName() = '5'" `{select * from foo where (= (::sdb/id) 5)}
+    "select * from `foo` where itemName() in ('0', '1', '2', '3', '4')" `{select * from foo where (in (::sdb/id) ~(range 5))}
     ))
 
 (deftest ordering+limit

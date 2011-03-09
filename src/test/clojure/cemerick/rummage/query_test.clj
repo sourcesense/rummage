@@ -7,21 +7,21 @@
 (use-fixtures :once test/verify-domain-cleanup)
 
 ; dataset pulled from http://docs.amazonwebservices.com/AmazonSimpleDB/latest/DeveloperGuide/UsingSelectSampleDataset.html
-(def dataset [{:year 1959 :pages 336 :author "Kurt Vonnegut" :title "The Sirens of Titan" :sdb/id "0385333498"
+(def dataset [{:year 1959 :pages 336 :author "Kurt Vonnegut" :title "The Sirens of Titan" ::sdb/id "0385333498"
                :keyword #{:book :paperback}
                :rating #{:***** "5 stars" "Excellent"}}
-              {:year 1934 :pages 318 :author "Henry Miller" :title "Tropic of Cancer" :sdb/id "0802131786"
+              {:year 1934 :pages 318 :author "Henry Miller" :title "Tropic of Cancer" ::sdb/id "0802131786"
                :rating :*****}
-              {:year 1979 :pages 304 :author "Tom Wolfe" :title "The Right Stuff" :sdb/id "1579124585"
+              {:year 1979 :pages 304 :author "Tom Wolfe" :title "The Right Stuff" ::sdb/id "1579124585"
                :keyword #{:book :hardcover :american}
                :rating #{"4 stars" :****}}
-              {:year 2006 :author "Paul Van Dyk" :title "In Between" :sdb/id "B000T9886K"
+              {:year 2006 :author "Paul Van Dyk" :title "In Between" ::sdb/id "B000T9886K"
                :keyword #{:trance :CD}
                :rating #{"4 stars"}}
-              {:year 2007 :author "Zack Snyder" :title "300" :sdb/id "B00005JPLW"
+              {:year 2007 :author "Zack Snyder" :title "300" ::sdb/id "B00005JPLW"
                :keyword #{"Frank Miller" :action :DVD}
                :rating #{:*** "3 stars" "Not bad"}}
-              {:year 2002 :author "Thievery Corporation" :title "Heaven's Gonna Burn Your Eyes" :sdb/id "B000SF3NGK"
+              {:year 2002 :author "Thievery Corporation" :title "Heaven's Gonna Burn Your Eyes" ::sdb/id "B000SF3NGK"
                :rating :*****}])
 
 (defsdbtest test-special-returns
@@ -31,7 +31,7 @@
           ; verify that string queries are just passed through
           (query config (str "select count(*) from " (#'sdb/escape-encode *test-domain-name*)))))
     
-    (is (= (->> dataset (map :sdb/id) set)
+    (is (= (->> dataset (map ::sdb/id) set)
           (set (query config `{select id from ~*test-domain-name*}))
           ; verify that string queries are just passed through
           (set (query config (str "select itemName() from " (#'sdb/escape-encode *test-domain-name*))))))
@@ -44,16 +44,16 @@
     
     (are [expected select] (= (set expected) (set (query config select)))  
       (->> (filter :keyword dataset)
-        (map #(select-keys % [:year :author :title :sdb/id]))
+        (map #(select-keys % [:year :author :title ::sdb/id]))
         ; testing of all-strings leaking in here
-        (map #(into {} (for [[k v] %] [(if (= :sdb/id k) k (str k)) (str v)]))))
+        (map #(into {} (for [[k v] %] [(if (= ::sdb/id k) k (str k)) (str v)]))))
       `{select [:year :title :author] from ~*test-domain-name* where (not-null :keyword)})))
 
 (defsdbtest queries
   (let [config (assoc enc/all-strings :client client :consistent-read? true)]
     (batch-put-attrs config *test-domain-name* dataset)
     
-    (are [expected select] (= (->> expected (map :sdb/id) set)
+    (are [expected select] (= (->> expected (map ::sdb/id) set)
                             (set (query config select)))
       (filter #(< 1975 (:year %) 2005) dataset)
       `{select id from ~*test-domain-name* where (between :year 1975 2005)}
@@ -83,15 +83,15 @@
       `{select id from ~*test-domain-name* where (or (= :keyword :DVD) (= :keyword :CD))}
       
       ; live itemName() query
-      (filter #(pos? (compare (:sdb/id %) "1579124585")) dataset)
-      `{select id from ~*test-domain-name* where (> (:sdb/id) "1579124585")}
+      (filter #(pos? (compare (::sdb/id %) "1579124585")) dataset)
+      `{select id from ~*test-domain-name* where (> (::sdb/id) "1579124585")}
       )))
 
 (defsdbtest ordered-queries
   (let [config (assoc enc/all-strings :client client :consistent-read? true)]
     (batch-put-attrs config *test-domain-name* dataset)
     
-    (are [expected select] (= (map :sdb/id expected)
+    (are [expected select] (= (map ::sdb/id expected)
                              (query config select))
       
       (sort-by :year dataset)
@@ -111,14 +111,14 @@
       `{select id from ~*test-domain-name* where (> :year 0) order-by [:year "desc"] limit 1}
       
       ; itemName()
-      (->> (sort-by :sdb/id dataset)
-        (filter #(pos? (compare (:sdb/id %) "2")))
+      (->> (sort-by ::sdb/id dataset)
+        (filter #(pos? (compare (::sdb/id %) "2")))
         reverse)
-      `{select id from ~*test-domain-name* where (> (:sdb/id) "2") order-by [(:sdb/id) desc]})))
+      `{select id from ~*test-domain-name* where (> (::sdb/id) "2") order-by [(::sdb/id) desc]})))
 
 (defsdbtest test-query-all
   (let [config (assoc (enc/fixed-domain-schema {:key Integer}) :client client :consistent-read? true)
-        dataset (for [x (range 5000)] {:sdb/id x :key x})]
+        dataset (for [x (range 5000)] {::sdb/id x :key x})]
     (batch-put-attrs config *test-domain-name* dataset)
     
     (is (= (->> dataset (map :key) (apply +))
