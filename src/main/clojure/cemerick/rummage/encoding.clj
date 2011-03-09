@@ -28,7 +28,10 @@
 (def keyword-strings
   (assoc all-strings
     :encode (fn encode
-              ([k] (subs (str k) 1))
+              ([k]
+                (when-not (keyword? k)
+                  (throw (IllegalArgumentException. (str "Unsupported key type, expected keyword: " (pr-str k)))))
+                (subs (str k) 1))
               ([k v] [(encode k) (str v)]))
     :decode (fn
               ([k] (keyword k))

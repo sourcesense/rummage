@@ -36,12 +36,15 @@
 
 (deftest keyword-strings
   (roundtrip-id enc/keyword-strings "a")
-  (roundtrip enc/keyword-strings [:a "b"] [:ns/a "b"]))
+  (roundtrip enc/keyword-strings [:a "b"] [:ns/a "b"])
+  
+  (is (thrown-with-msg? Exception #"Unsupported key type"
+        ((:encode enc/keyword-strings) "string-name"))))
 
 (deftest name-typed-values
   (roundtrip-id enc/name-typed-values
     "a" :a :ns/a 42 (Integer. 42) 42.0 -5000.16 (Float. 42.42)
-    true false 
+    true false
     (Date.) (URL. "http://clojure.org"))
   
   (roundtrip enc/name-typed-values
