@@ -73,9 +73,10 @@
 (deftest fixed-domain-schema
   (let [record {:name "Amy"
                 :birthday (Date.)
-                :weight 145.5
+                "weight" 145.5
                 :homepage (URL. "http://clojure.org")
-                :karma (Integer. 788)}
+                :karma (Integer. 788)
+                true false}
         encoding (enc/fixed-domain-schema (into {} (for [[k v] record]
                                                      [k (class v)])))]
     (apply roundtrip encoding record)))
