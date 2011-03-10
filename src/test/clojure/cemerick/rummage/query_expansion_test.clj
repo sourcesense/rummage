@@ -4,7 +4,7 @@
   (:require [cemerick.rummage.encoding :as enc]))
 
 (deftest basic-queries
-  (are [query-string select-map] (= query-string (#'sdb/select-string enc/all-strings select-map))
+  (are [query-string select-map] (= query-string (select-string enc/all-strings select-map))
     ; *, count, id
     "select * from `foo`" `{select * from foo}
     "select * from `foo`" `{:select * :from "foo"}
@@ -48,7 +48,7 @@
     ))
 
 (deftest ordering+limit
-  (are [query-string select-map] (= query-string (#'sdb/select-string enc/all-strings select-map))
+  (are [query-string select-map] (= query-string (select-string enc/all-strings select-map))
     "select * from `foo` limit 50" `{select * from foo limit 50}
     "select * from `foo` limit 2500" `{select * from foo limit 6000}
     
@@ -57,13 +57,13 @@
     ))
 
 (deftest escaping
-  (are [query-string select-map] (= query-string (#'sdb/select-string enc/all-strings select-map))
+  (are [query-string select-map] (= query-string (select-string enc/all-strings select-map))
     "select ```a'\"` from `foo` where ```a'\"` = '`a''\"'" `{select ["`a'\""] from foo where (= "`a'\"" "`a'\"")}
     ))
 
 (deftest invalid-queries
   (are [select-map exception-pattern] (thrown-with-msg? Exception exception-pattern
-                                        (#'sdb/select-string enc/all-strings select-map))
+                                        (select-string enc/all-strings select-map))
     `{select a from foo} #"invalid attribute spec"
     `{select "a" from foo} #"invalid attribute spec"
     `{select ids from foo} #"invalid attribute spec"

@@ -295,9 +295,10 @@
              
              :else (min 2500 %))})
 
-(defn- select-string
+(defn select-string
   "Produces a string representing the query map in the SDB Select language.
-  `query` calls this for you."
+  `query` calls this for you.  This is public only to aid in diagnostics and otherwise
+  understanding how query maps are translated into query strings."
   [config select-map]
   (binding [*select-encode-fn* (partial attribute-clause
                                  (comp escape-encode (:encode config))
