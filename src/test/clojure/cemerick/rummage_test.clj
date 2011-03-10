@@ -162,7 +162,7 @@
 
 (defsdbtest test-delete
   (let [config (assoc enc/all-strings :client client :consistent-read? true)]
-    (put-attrs config *test-domain-name* {::sdb/id "foo" :a 5 :b [5 6 7] :c 7})
+    (put-attrs config *test-domain-name* {::sdb/id "foo" :a 5 :b [4 5 6 7] :c 7})
     
     (is (thrown-with-msg? com.amazonaws.AmazonServiceException #".*Conditional check failed.*"
           (delete-attrs config *test-domain-name* "foo" :attrs {:c 7} :not-expecting :a)))
@@ -173,12 +173,15 @@
     (delete-attrs config *test-domain-name* "foo" :attrs #{:c} :expecting [:c 7])
     (is (nil? (get (get-attrs config *test-domain-name* "foo" :c) ":c")))
     
-    (delete-attrs config *test-domain-name* "foo" :attrs {:b 7})    
-    (is (= #{"5" "6"} (get (get-attrs config *test-domain-name* "foo" :b) ":b")))
+    (delete-attrs config *test-domain-name* "foo" :attrs {:b 7})
+    (is (= #{"4" "5" "6"} (get (get-attrs config *test-domain-name* "foo" :b) ":b")))
+    
+    (delete-attrs config *test-domain-name* "foo" :attrs {:b #{5 6}})
+    (is (= "4" (get (get-attrs config *test-domain-name* "foo" :b) ":b")))
     
     (delete-attrs config *test-domain-name* "foo" :attrs #{:b})    
     (is (nil? (get (get-attrs config *test-domain-name* "foo" :b) ":b")))
-    
+   
     (delete-attrs config *test-domain-name* "foo")
     (is (nil? (get-attrs config *test-domain-name* "foo")))))
 

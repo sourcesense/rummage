@@ -154,11 +154,13 @@
                 (set? attrs) (for [key attrs] [key nil])
                 :else (throw (IllegalArgumentException.
                                ":attrs must be a set of attribute keys, a map of attribute keys and values, or absent to delete all attributes of item-id")))]
-    (for [[key value] attrs]
-      (if value
-        (let [[name value] (encode-fn key value)]
-          (Attribute. name value))
-        (.withName (Attribute.) (encode-fn key))))))
+    (flatten
+      (for [[key value] attrs]
+        (if value
+          (for [v (as-collection value)]
+            (let [[name value] (encode-fn key v)]
+              (Attribute. name value)))
+          (.withName (Attribute.) (encode-fn key)))))))
 
 (defn delete-attrs
   "Deletes the attrs from the item. If no attrs are supplied, deletes
