@@ -25,12 +25,18 @@
              ([name value] (map str [name value])))
    :decode identity})
 
+(defn- assert-keyword
+  [k require-namespace?]
+  (when-not (keyword? k)
+    (throw (IllegalArgumentException. (str "Unsupported key type, expected keyword: " (pr-str k)))))
+  (when (and require-namespace? (not (namespace k)))
+    (throw (IllegalArgumentException. (format "Encountered %s key, expected namespaced keyword." k)))))
+
 (def keyword-strings
   (assoc all-strings
     :encode (fn encode
               ([k]
-                (when-not (keyword? k)
-                  (throw (IllegalArgumentException. (str "Unsupported key type, expected keyword: " (pr-str k)))))
+                (assert-keyword k false)
                 (subs (str k) 1))
               ([k v] [(encode k) (str v)]))
     :decode (fn
@@ -130,11 +136,12 @@
   ([prefix-formatting]
     (assoc prefixed-id-formatting
       :encode (fn encode
-                ([k] (to-prefixed-string prefix-formatting k))
+                ([k]
+                  (assert-keyword k true)
+                  (to-prefixed-string prefix-formatting k))
                 ([k v]
-                  (let [ns (namespace k)]
-                    [(encode k)
-                     (to-prefixed-string prefix-formatting v ns)])))
+                  [(encode k)
+                   (to-prefixed-string prefix-formatting v (namespace k))]))
       :decode (fn decode
                 ([k] (from-prefixed-string prefix-formatting k))
                 ([k v]

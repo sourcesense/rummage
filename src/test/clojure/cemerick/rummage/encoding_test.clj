@@ -63,7 +63,12 @@
     [:s/string "a"] [:i/integer 42]
     [:z/boolean true] [:f/floating-point 108.6]
     [:U/url (URL. "http://clojure.org")]
-    [:D/date (Date.)]))
+    [:D/date (Date.)])
+  
+  (is (thrown-with-msg? Exception #"Unsupported key type"
+        ((:encode enc/keyword-strings) "string-name")))
+  (is (thrown-with-msg? Exception #"expected namespaced keyword"
+        ((:encode (enc/name-typed-values-config)) :foo))))
 
 (deftest fixed-domain-schema
   (let [record {:name "Amy"
