@@ -42,7 +42,14 @@
   (let [config (assoc enc/all-strings :client client :consistent-read? true)]
     (batch-put-attrs config *test-domain-name* dataset)
     
-    (are [expected select] (= (set expected) (set (query config select)))  
+    (is (= (->> (filter :keyword dataset)
+             (map (comp count :keyword))
+             set)
+          (->> (query config `{select [:keyword] from ~*test-domain-name* where (not-null :keyword)})
+            (map #(-> % (get ":keyword") count))
+            set)))
+    
+    (are [expected select] (= (set expected) (set (query config select)))
       (->> (filter :keyword dataset)
         (map #(select-keys % [:year :author :title ::sdb/id]))
         ; testing of all-strings leaking in here

@@ -132,7 +132,7 @@
   (reduce
     (fn [m ^Attribute a]
       (let [[k v] (decode-fn (.getName a) (.getValue a))]
-        (update-in m [k] #(if % (-> % as-set (conj %2)) %2) v)))
+        (update-in m [k] #(if % (-> % as-set (conj v)) v))))
     {::id item-id}
     attributes))
 
@@ -318,11 +318,13 @@
 
 (defn- decode-item
   [{:keys [decode-id decode]} ^Item item]
-  (assoc (->> (.getAttributes item)
-           (map (fn [^Attribute a]
-                  (decode (.getName a) (.getValue a))))
-           (into {}))
-    ::id (-> item .getName decode-id)))
+  (->> (.getAttributes item)
+    (map (fn [^Attribute a]
+           (decode (.getName a) (.getValue a))))
+    (reduce
+      (fn [item [k v]]
+        (update-in item [k] #(if % (-> % as-set (conj v)) v)))
+      {::id (-> item .getName decode-id)})))
 
 (defn query
   "Issue a query. When `q` is a string, it is submitted directly without any interpretation.
