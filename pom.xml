@@ -53,6 +53,8 @@
                 <executions>
                     <execution>
                         <id>clojure-test</id>
+                        <!--  disable all actual tests for now... -->
+                        <phase>deploy</phase>
                         <configuration>
                             <clojureOptions>-Daws.id=${aws.id} -Daws.secret-key=${aws.secret-key}</clojureOptions>
                         </configuration>
@@ -61,6 +63,29 @@
                 <configuration>
                     <warnOnReflection>true</warnOnReflection>
                 </configuration>
+            </plugin>
+            
+            <plugin>
+                <artifactId>maven-invoker-plugin</artifactId>
+                <version>1.5</version>
+                <configuration>
+                    <projectsDirectory>src/integration</projectsDirectory>
+                    <cloneProjectsTo>${project.build.directory}/integration</cloneProjectsTo>
+                    <pomIncludes>
+                        <pomInclude>*/pom.xml</pomInclude>
+                    </pomIncludes>
+                    <streamLogs>true</streamLogs>
+                    <goals><goal>clojure:test</goal></goals>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>integration-test</id>
+                        <goals>
+                            <goal>install</goal>
+                            <goal>run</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>

@@ -3,6 +3,8 @@
     clojure.test)
   (:require [cemerick.rummage.encoding :as enc]))
 
+(println (format "Testing with Clojure v%s" (clojure-version)))
+
 #_(do
     (System/setProperty "aws.id" "")
     (System/setProperty "aws.secret-key" ""))
