@@ -50,14 +50,14 @@ Rummage is available in Maven central.  Add it to your Maven project's `pom.xml`
 <dependency>
   <groupId>com.cemerick</groupId>
   <artifactId>rummage</artifactId>
-  <version>0.0.1</version>
+  <version>0.0.2</version>
 </dependency>
 ----
 
 or your leiningen/cake project.clj:
 
 ----
-[com.cemerick/rummage "0.0.1"]
+[com.cemerick/rummage "0.0.2"]
 ----
 
 == Logging
