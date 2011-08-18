@@ -25,7 +25,7 @@ _____
 
 == Status
 
-This library is functionally completely new; literally, v0.0.1.  There will be changes.
+This library is functionally very new, even though it was forked from an established project.  There will be changes.
 
 === Current TODOs
 
@@ -50,14 +50,14 @@ Rummage is available in Maven central.  Add it to your Maven project's `pom.xml`
 <dependency>
   <groupId>com.cemerick</groupId>
   <artifactId>rummage</artifactId>
-  <version>0.0.2</version>
+  <version>0.0.3</version>
 </dependency>
 ----
 
 or your leiningen/cake project.clj:
 
 ----
-[com.cemerick/rummage "0.0.2"]
+[com.cemerick/rummage "0.0.3"]
 ----
 
 == Logging
