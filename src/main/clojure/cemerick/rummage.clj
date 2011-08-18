@@ -188,8 +188,8 @@
         (client client-config)
         (BatchDeleteAttributesRequest. domain batch)))))
 
-(def ^{:private true} *select-encode-fn*)
-(def ^{:private true} *select-encode-id-fn*)
+(def ^{:private true :dynamic true} *select-encode-fn*)
+(def ^{:private true :dynamic true} *select-encode-id-fn*)
 
 (defn- escape
   [^String name-quote ^String value-quote]
@@ -223,7 +223,7 @@
       
       :else (apply encode-fn args))))
 
-(defn- where-str
+(defn- ^{:dynamic true} where-str
   [where-expansions expr]
   (binding [where-str (partial where-str where-expansions)]
     (let [expr-op (-> expr first strip-symbol-ns)

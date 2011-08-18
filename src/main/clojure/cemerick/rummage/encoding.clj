@@ -73,15 +73,14 @@
       (encode v)
       (throw (IllegalArgumentException. (str "No formatter available for prefix " prefix))))))
 
-(def ^{:tag 'java.lang.Long
-       :doc "The largest absolute value integer that can be encoded (/ Long/MAX_VALUE 2)."}
+(def ^{:doc "The largest absolute value integer that can be encoded (/ Long/MAX_VALUE 2)."}
   max-abs-integer (Long. (long (/ Long/MAX_VALUE 2))))
 
 (defn encode-integer
   [i]
   (when (> (Math/abs (long i)) max-abs-integer)
     (throw (IllegalArgumentException. (format "encode-integer can support only integers between %s and -%s" max-abs-integer max-abs-integer))))
-  (DataUtils/encodeRealNumberRange (long i) 19 max-abs-integer))
+  (DataUtils/encodeRealNumberRange (long i) (int 19) (long max-abs-integer)))
 
 (defn decode-integer
   [istr]

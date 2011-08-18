@@ -3,6 +3,8 @@
     clojure.test)
   (:require [cemerick.rummage.encoding :as enc]))
 
+(println (format "Testing with Clojure v%s" (clojure-version)))
+
 #_(do
     (System/setProperty "aws.id" "")
     (System/setProperty "aws.secret-key" ""))
@@ -21,7 +23,7 @@
   []
   (str (java.util.UUID/randomUUID)))
 
-(def *test-domain-name* nil)
+(def ^{:dynamic true} *test-domain-name* nil)
 
 (def test-domain-name-prefix "rummage-test-")
 
